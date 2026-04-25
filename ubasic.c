@@ -34,8 +34,8 @@
  * Changes and additions are marked 'string additions' throughout
  */
  
-#define DEBUG 0
-#define VERBOSE 0
+#define DEBUG 1
+#define VERBOSE 1
 
 #if DEBUG
 #define DEBUG_PRINTF(...)  printf(__VA_ARGS__)
@@ -118,6 +118,8 @@ poke_func poke_function = NULL;
 static char nullstring[] = "\0"; 
 static void  var_init(void);
 static char* sexpr(void);
+static VARIABLE_TYPE get_array_element(int varnum, uint16_t idx1, uint16_t idx2, uint16_t idx3);
+static void set_array_element(int varnum, uint16_t idx1, uint16_t idx2, uint16_t idx3, VARIABLE_TYPE value);
 static char* scpy(const char *);
 static char* sconcat(const char *, const char *);
 static char* sleft(const char *, int); 
@@ -761,9 +763,34 @@ static int slogexpr() { // string logical expression
 /*---------------------------------------------------------------------------*/
 static int varfactor(void) {
   int r;
-  DEBUG_PRINTF("varfactor: obtaining %d from variable %d.\n", get_variable(tokenizer_variable_num()), tokenizer_variable_num());
-  r = get_variable(tokenizer_variable_num());
+  int var;
+  uint16_t idx1 = 0, idx2 = 0, idx3 = 0;
+  
+  var = tokenizer_variable_num();
+  DEBUG_PRINTF("varfactor: obtaining %d from variable %d.\n", get_variable(var), var);
   accept(TOKENIZER_VARIABLE);
+  
+  /* Check for array indexing */
+  if (tokenizer_token() == TOKENIZER_LEFTPAREN) {
+    accept(TOKENIZER_LEFTPAREN);
+    idx1 = (uint16_t)expr();
+    
+    if (tokenizer_token() == TOKENIZER_COMMA) {
+      accept(TOKENIZER_COMMA);
+      idx2 = (uint16_t)expr();
+      
+      if (tokenizer_token() == TOKENIZER_COMMA) {
+        accept(TOKENIZER_COMMA);
+        idx3 = (uint16_t)expr();
+      }
+    }
+    
+    accept(TOKENIZER_RIGHTPAREN);
+    r = get_array_element(var, idx1, idx2, idx3);
+  } else {
+    r = get_variable(var);
+  }
+  
   return r;
 }
 /*---------------------------------------------------------------------------*/
@@ -949,10 +976,10 @@ static char const* index_find(int linenum) {
     #if DEBUG
     	#if VERBOSE
       		if(lidx != NULL) {
-        		DEBUG_PRINTF("index_find: Step %3d. Found index for line %d: %p.\n",
+        		DEBUG_PRINTF("index_find: Step %3d. Found index for line %d: %lld.\n",
         		step,
         		lidx->line_number,
-        		lidx->program_text_position - tokenizer_start());
+        		(long long)(lidx->program_text_position - tokenizer_start()));
       		}
       		step++;
     	#endif
@@ -991,8 +1018,8 @@ static void index_add(int linenum, char const* sourcepos) {
   }
   #if DEBUG
   	#if VERBOSE
-		DEBUG_PRINTF("index_add: Adding index for line %d: %p.\n", linenum,
-			sourcepos - tokenizer_start());
+		DEBUG_PRINTF("index_add: Adding index for line %d: %lld.\n", linenum,
+			(long long)(sourcepos - tokenizer_start()));
 		#endif
 	#endif
 }
@@ -1106,13 +1133,49 @@ static void if_statement(void){
 static void let_statement(void){
 // string additions here
   int var;
+  uint16_t idx1 = 0, idx2 = 0, idx3 = 0;
+  int is_array = 0;
+  
   if (tokenizer_token() == TOKENIZER_VARIABLE) {
      var = tokenizer_variable_num();
      accept(TOKENIZER_VARIABLE);
+     
+     /* Check for array indexing */
+     if (tokenizer_token() == TOKENIZER_LEFTPAREN) {
+       is_array = 1;
+       accept(TOKENIZER_LEFTPAREN);
+       idx1 = (uint16_t)expr();
+       
+       if (tokenizer_token() == TOKENIZER_COMMA) {
+         accept(TOKENIZER_COMMA);
+         idx2 = (uint16_t)expr();
+         
+         if (tokenizer_token() == TOKENIZER_COMMA) {
+           accept(TOKENIZER_COMMA);
+           idx3 = (uint16_t)expr();
+         }
+       }
+       
+       accept(TOKENIZER_RIGHTPAREN);
+     }
+     
      accept(TOKENIZER_EQ);
-     set_variable(var, expr());
+     
+     if (is_array) {
+       set_array_element(var, idx1, idx2, idx3, expr());
+     } else {
+       set_variable(var, expr());
+     }
+     
 	 #if VERBOSE
-    DEBUG_PRINTF("let_statement: assign %d to %d.\n", get_variable(var), var);
+     if (is_array) {
+       DEBUG_PRINTF("let_statement: assign to array %c(%u", 'a'+var, (unsigned)idx1);
+       if (idx2 > 0) DEBUG_PRINTF(",%u", (unsigned)idx2);
+       if (idx3 > 0) DEBUG_PRINTF(",%u", (unsigned)idx3);
+       DEBUG_PRINTF(")\n");
+     } else {
+       DEBUG_PRINTF("let_statement: assign %d to %d.\n", get_variable(var), var);
+     }
      #endif
 	 accept(TOKENIZER_LF);
   } else if (tokenizer_token() == TOKENIZER_STRINGVARIABLE) {
@@ -1247,6 +1310,111 @@ static void end_statement(void)
   ended = 1;
 }
 /*---------------------------------------------------------------------------*/
+static void dim_statement(void) {
+  int var;
+  char varname;
+  var_desc_t *v;
+  uint16_t dim1, dim2 = 1, dim3 = 1;
+  uint16_t total_elements;
+  uint16_t data_bytes;
+  uint16_t desc_offset, data_offset;
+  array_desc_t *arr_desc;
+  VARIABLE_TYPE *arr_data;
+  uint16_t i;
+  
+  accept(TOKENIZER_DIM);
+  
+  if (tokenizer_token() != TOKENIZER_VARIABLE) {
+    DEBUG_PRINTF("dim_statement: Expected variable name.\n");
+    ended = 1;
+    return;
+  }
+  
+  var = tokenizer_variable_num();
+  varname = 'a' + (char)var;
+  accept(TOKENIZER_VARIABLE);
+  accept(TOKENIZER_LEFTPAREN);
+  
+  /* Parse dimensions */
+  dim1 = (uint16_t)expr();
+  
+  if (tokenizer_token() == TOKENIZER_COMMA) {
+    accept(TOKENIZER_COMMA);
+    dim2 = (uint16_t)expr();
+    
+    if (tokenizer_token() == TOKENIZER_COMMA) {
+      accept(TOKENIZER_COMMA);
+      dim3 = (uint16_t)expr();
+    }
+  }
+  
+  accept(TOKENIZER_RIGHTPAREN);
+  accept(TOKENIZER_LF);
+  
+  /* Validate dimensions */
+  if (dim1 == 0 || dim2 == 0 || dim3 == 0) {
+    DEBUG_PRINTF("dim_statement: Invalid dimension (zero).\n");
+    ended = 1;
+    return;
+  }
+  
+  /* Calculate total size */
+  total_elements = dim1 * dim2 * dim3;
+  data_bytes = total_elements * sizeof(VARIABLE_TYPE);
+  
+  #if VERBOSE
+    DEBUG_PRINTF("dim_statement: DIM %c(%u", varname, (unsigned)dim1);
+    if (dim2 > 1) DEBUG_PRINTF(",%u", (unsigned)dim2);
+    if (dim3 > 1) DEBUG_PRINTF(",%u", (unsigned)dim3);
+    DEBUG_PRINTF(") = %u elements, %u bytes\n", 
+                 (unsigned)total_elements, (unsigned)data_bytes);
+  #endif
+  
+  /* Create array variable */
+  v = find_or_create_variable(varname, VARTYPE_ARRAY);
+  if (v == NULL) {
+    DEBUG_PRINTF("dim_statement: Failed to create variable.\n");
+    ended = 1;
+    return;
+  }
+  
+  /* Allocate array descriptor */
+  desc_offset = heap_alloc(sizeof(array_desc_t));
+  if (desc_offset == 0) {
+    DEBUG_PRINTF("dim_statement: Out of memory for array descriptor.\n");
+    ended = 1;
+    return;
+  }
+  v->arr_offset = desc_offset;
+  
+  /* Allocate array data */
+  data_offset = heap_alloc(data_bytes);
+  if (data_offset == 0) {
+    DEBUG_PRINTF("dim_statement: Out of memory for array data.\n");
+    ended = 1;
+    return;
+  }
+  
+  /* Initialize array descriptor */
+  arr_desc = (array_desc_t *)(mem_base + desc_offset);
+  arr_desc->data_offset = data_offset;
+  arr_desc->dimensions = (dim2 > 1) ? ((dim3 > 1) ? 3 : 2) : 1;
+  arr_desc->dim_size[0] = dim1;
+  arr_desc->dim_size[1] = dim2;
+  arr_desc->dim_size[2] = dim3;
+  
+  /* Initialize array data to zero */
+  arr_data = (VARIABLE_TYPE *)(mem_base + data_offset);
+  for (i = 0; i < total_elements; i++) {
+    arr_data[i] = 0;
+  }
+  
+  #if VERBOSE
+    DEBUG_PRINTF("dim_statement: Array descriptor at %u, data at %u\n",
+                 (unsigned)desc_offset, (unsigned)data_offset);
+  #endif
+}
+/*---------------------------------------------------------------------------*/
 static void statement(void){
   int token;
 
@@ -1255,6 +1423,9 @@ static void statement(void){
   switch(token) {
   case TOKENIZER_PRINT:
     print_statement();
+    break;
+  case TOKENIZER_DIM:
+    dim_statement();
     break;
   case TOKENIZER_IF:
     if_statement();
@@ -1387,6 +1558,115 @@ char *get_stringvariable(int varnum) {
   }
   
   return (char *)(mem_base + v->str_offset);
+}
+/*---------------------------------------------------------------------------*/
+static VARIABLE_TYPE get_array_element(int varnum, uint16_t idx1, uint16_t idx2, uint16_t idx3) {
+  char varname = 'a' + (char)varnum;
+  var_desc_t *v;
+  array_desc_t *arr_desc;
+  VARIABLE_TYPE *arr_data;
+  uint16_t offset;
+  
+  if (varnum < 0 || varnum >= 26 || mem_base == NULL) {
+    return 0;
+  }
+  
+  v = find_variable(varname);
+  if (v == NULL || v->type != VARTYPE_ARRAY) {
+    DEBUG_PRINTF("get_array_element: Variable %c is not an array\n", varname);
+    return 0;
+  }
+  
+  arr_desc = (array_desc_t *)(mem_base + v->arr_offset);
+  
+  /* Validate indices */
+  if (idx1 >= arr_desc->dim_size[0]) {
+    DEBUG_PRINTF("get_array_element: Index 1 (%u) out of bounds (max %u)\n", 
+                 (unsigned)idx1, (unsigned)arr_desc->dim_size[0]);
+    return 0;
+  }
+  if (arr_desc->dimensions >= 2 && idx2 >= arr_desc->dim_size[1]) {
+    DEBUG_PRINTF("get_array_element: Index 2 (%u) out of bounds (max %u)\n", 
+                 (unsigned)idx2, (unsigned)arr_desc->dim_size[1]);
+    return 0;
+  }
+  if (arr_desc->dimensions >= 3 && idx3 >= arr_desc->dim_size[2]) {
+    DEBUG_PRINTF("get_array_element: Index 3 (%u) out of bounds (max %u)\n", 
+                 (unsigned)idx3, (unsigned)arr_desc->dim_size[2]);
+    return 0;
+  }
+  
+  /* Calculate linear offset */
+  if (arr_desc->dimensions == 1) {
+    offset = idx1;
+  } else if (arr_desc->dimensions == 2) {
+    offset = idx1 * arr_desc->dim_size[1] + idx2;
+  } else {
+    offset = (idx1 * arr_desc->dim_size[1] + idx2) * arr_desc->dim_size[2] + idx3;
+  }
+  
+  arr_data = (VARIABLE_TYPE *)(mem_base + arr_desc->data_offset);
+  return arr_data[offset];
+}
+/*---------------------------------------------------------------------------*/
+static void set_array_element(int varnum, uint16_t idx1, uint16_t idx2, uint16_t idx3, VARIABLE_TYPE value) {
+  char varname = 'a' + (char)varnum;
+  var_desc_t *v;
+  array_desc_t *arr_desc;
+  VARIABLE_TYPE *arr_data;
+  uint16_t offset;
+  
+  if (varnum < 0 || varnum >= 26 || mem_base == NULL) {
+    return;
+  }
+  
+  v = find_variable(varname);
+  if (v == NULL || v->type != VARTYPE_ARRAY) {
+    DEBUG_PRINTF("set_array_element: Variable %c is not an array\n", varname);
+    ended = 1;
+    return;
+  }
+  
+  arr_desc = (array_desc_t *)(mem_base + v->arr_offset);
+  
+  /* Validate indices */
+  if (idx1 >= arr_desc->dim_size[0]) {
+    DEBUG_PRINTF("set_array_element: Index 1 (%u) out of bounds (max %u)\n", 
+                 (unsigned)idx1, (unsigned)arr_desc->dim_size[0]);
+    ended = 1;
+    return;
+  }
+  if (arr_desc->dimensions >= 2 && idx2 >= arr_desc->dim_size[1]) {
+    DEBUG_PRINTF("set_array_element: Index 2 (%u) out of bounds (max %u)\n", 
+                 (unsigned)idx2, (unsigned)arr_desc->dim_size[1]);
+    ended = 1;
+    return;
+  }
+  if (arr_desc->dimensions >= 3 && idx3 >= arr_desc->dim_size[2]) {
+    DEBUG_PRINTF("set_array_element: Index 3 (%u) out of bounds (max %u)\n", 
+                 (unsigned)idx3, (unsigned)arr_desc->dim_size[2]);
+    ended = 1;
+    return;
+  }
+  
+  /* Calculate linear offset */
+  if (arr_desc->dimensions == 1) {
+    offset = idx1;
+  } else if (arr_desc->dimensions == 2) {
+    offset = idx1 * arr_desc->dim_size[1] + idx2;
+  } else {
+    offset = (idx1 * arr_desc->dim_size[1] + idx2) * arr_desc->dim_size[2] + idx3;
+  }
+  
+  arr_data = (VARIABLE_TYPE *)(mem_base + arr_desc->data_offset);
+  arr_data[offset] = value;
+  
+  #if VERBOSE
+    DEBUG_PRINTF("set_array_element: %c(%u", varname, (unsigned)idx1);
+    if (arr_desc->dimensions >= 2) DEBUG_PRINTF(",%u", (unsigned)idx2);
+    if (arr_desc->dimensions >= 3) DEBUG_PRINTF(",%u", (unsigned)idx3);
+    DEBUG_PRINTF(") = %d\n", (int)value);
+  #endif
 }
 /*---------------------------------------------------------------------------*/
 static int32_t gosub_pop(void) {
