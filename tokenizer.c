@@ -34,8 +34,8 @@
  * Changes and additions are marked 'string additions' throughout
  */
  
-#define DEBUG 1
-#define VERBOSE 1
+#define DEBUG 0
+#define VERBOSE 0
 
 #if DEBUG
 #define DEBUG_PRINTF(...)  printf(__VA_ARGS__)

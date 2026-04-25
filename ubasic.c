@@ -34,8 +34,8 @@
  * Changes and additions are marked 'string additions' throughout
  */
  
-#define DEBUG 1
-#define VERBOSE 1
+#define DEBUG 0
+#define VERBOSE 0
 
 #if DEBUG
 #define DEBUG_PRINTF(...)  printf(__VA_ARGS__)
@@ -113,6 +113,16 @@ static void index_free(void);
 
 peek_func peek_function = NULL;
 poke_func poke_function = NULL;
+
+/* I/O function pointers matching C# wrapper API */
+static void default_out_function(const char *message) {
+  printf("%s", message);
+}
+
+out_func out_function = default_out_function;  /* Default to printf wrapper */
+put_func put_function = NULL;
+in_func in_function = NULL;
+get_func get_function = NULL;
 
 // string additions
 static char nullstring[] = "\0"; 
@@ -1097,8 +1107,8 @@ static void print_statement(void) {
     }
   } while(tokenizer_token() != TOKENIZER_LF &&
 	  tokenizer_token() != TOKENIZER_ENDOFINPUT);
-  printf(buf);
-  printf("\n");
+  out_function(buf);
+  out_function("\n");
   DEBUG_PRINTF("print_statement: End of print.\n");
   tokenizer_next();
 }
@@ -1667,6 +1677,22 @@ static void set_array_element(int varnum, uint16_t idx1, uint16_t idx2, uint16_t
     if (arr_desc->dimensions >= 3) DEBUG_PRINTF(",%u", (unsigned)idx3);
     DEBUG_PRINTF(") = %d\n", (int)value);
   #endif
+}
+/*---------------------------------------------------------------------------*/
+void ubasic_set_out_function(out_func func) {
+  out_function = func;
+}
+/*---------------------------------------------------------------------------*/
+void ubasic_set_put_function(put_func func) {
+  put_function = func;
+}
+/*---------------------------------------------------------------------------*/
+void ubasic_set_in_function(in_func func) {
+  in_function = func;
+}
+/*---------------------------------------------------------------------------*/
+void ubasic_set_get_function(get_func func) {
+  get_function = func;
 }
 /*---------------------------------------------------------------------------*/
 static int32_t gosub_pop(void) {
