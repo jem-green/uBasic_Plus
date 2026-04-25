@@ -1,0 +1,15 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug with cl.exe",
+      "type": "cppvsdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/ubasic.exe",
+      "args": [],
+      "stopAtEntry": false,
+      "cwd": "${workspaceFolder}",
+      "console": "externalTerminal"
+    }
+  ]
+}
