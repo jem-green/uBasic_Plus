@@ -74,6 +74,7 @@ static const struct keyword_token keywords[] = {
 // end of string additions
  
   {"dim", TOKENIZER_DIM},
+  {"input", TOKENIZER_INPUT},
   {"let", TOKENIZER_LET},
   {"print", TOKENIZER_PRINT},
   {"if", TOKENIZER_IF},

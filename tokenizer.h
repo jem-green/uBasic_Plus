@@ -59,6 +59,7 @@ enum {
   TOKENIZER_ASC,
 // end of string additions
   TOKENIZER_DIM,
+  TOKENIZER_INPUT,
   TOKENIZER_LET,
   TOKENIZER_PRINT,
   TOKENIZER_IF,
