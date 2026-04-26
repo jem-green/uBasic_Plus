@@ -82,6 +82,7 @@ static const struct keyword_token keywords[] = {
   {"else", TOKENIZER_ELSE},
   {"for", TOKENIZER_FOR},
   {"to", TOKENIZER_TO},
+  {"step", TOKENIZER_STEP},
   {"next", TOKENIZER_NEXT},
   {"goto", TOKENIZER_GOTO},
   {"gosub", TOKENIZER_GOSUB},

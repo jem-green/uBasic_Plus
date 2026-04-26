@@ -910,8 +910,23 @@ static int term(void) {
 static VARIABLE_TYPE expr(void){
   int t1, t2;
   int op;
+  int unary_minus = 0;
+  
+  /* Handle unary + or - */
+  if (tokenizer_token() == TOKENIZER_PLUS) {
+    accept(TOKENIZER_PLUS);
+  } else if (tokenizer_token() == TOKENIZER_MINUS) {
+    accept(TOKENIZER_MINUS);
+    unary_minus = 1;
+  }
 
   t1 = term();
+  
+  /* Apply unary minus if present */
+  if (unary_minus) {
+    t1 = -t1;
+  }
+  
   op = tokenizer_token();
   DEBUG_PRINTF("expr: token %s.\n", tokenizer_token_name(op));
   while(op == TOKENIZER_PLUS ||
@@ -1387,8 +1402,18 @@ static void next_statement(void){
   if(*for_depth_cell > 0 &&
      var == (int)for_stack[*for_depth_cell - 1].for_variable_index) {
     for_state top = for_stack[*for_depth_cell - 1];
-    set_variable(var, get_variable(var) + 1);
-    if(get_variable(var) <= top.to) {
+    VARIABLE_TYPE new_value = get_variable(var) + top.step;
+    set_variable(var, new_value);
+    
+    /* Check loop condition based on step direction */
+    int continue_loop;
+    if (top.step >= 0) {
+      continue_loop = (new_value <= top.to);
+    } else {
+      continue_loop = (new_value >= top.to);
+    }
+    
+    if(continue_loop) {
       jump_linenum(top.line_after_for);
     } else {
       for_pop();
@@ -1405,7 +1430,7 @@ static void next_statement(void){
 }
 /*---------------------------------------------------------------------------*/
 static void for_statement(void) {
-  int for_variable, to;
+  int for_variable, to, step;
 
   accept(TOKENIZER_FOR);
   for_variable = tokenizer_variable_num();
@@ -1414,15 +1439,25 @@ static void for_statement(void) {
   set_variable(for_variable, expr());
   accept(TOKENIZER_TO);
   to = expr();
+  
+  /* Optional STEP parameter, defaults to 1 */
+  if (tokenizer_token() == TOKENIZER_STEP) {
+    accept(TOKENIZER_STEP);
+    step = expr();
+  } else {
+    step = 1;
+  }
+  
   accept(TOKENIZER_LF);
 
   for_state st;
   st.line_after_for = (int32_t)tokenizer_num();
   st.for_variable_index = (int32_t)for_variable;
   st.to = (int32_t)to;
+  st.step = (int32_t)step;
   for_push(st);
   #if VERBOSE
-    DEBUG_PRINTF("for_statement: new for, var %d to %d.\n", (int)st.for_variable_index, (int)st.to);
+    DEBUG_PRINTF("for_statement: new for, var %d to %d step %d.\n", (int)st.for_variable_index, (int)st.to, (int)st.step);
   #endif
   
 }

@@ -89,6 +89,7 @@ typedef struct for_state {
   int32_t line_after_for;
   int32_t for_variable_index; /* 0..51 (a-z then A-Z) */
   int32_t to;
+  int32_t step;
 } for_state;
 
 /* Control state at low addresses */
