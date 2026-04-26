@@ -72,6 +72,19 @@ static const struct keyword_token keywords[] = {
   {"instr",                   TOKENIZER_INSTR},
   {"asc",                     TOKENIZER_ASC},
 // end of string additions
+// math functions
+  {"abs",                     TOKENIZER_ABS},
+  {"int",                     TOKENIZER_INT},
+  {"sgn",                     TOKENIZER_SGN},
+  {"sqr",                     TOKENIZER_SQR},
+  {"rnd",                     TOKENIZER_RND},
+  {"sin",                     TOKENIZER_SIN},
+  {"cos",                     TOKENIZER_COS},
+  {"tan",                     TOKENIZER_TAN},
+  {"atn",                     TOKENIZER_ATN},
+  {"exp",                     TOKENIZER_EXP},
+  {"log",                     TOKENIZER_LOG},
+// end of math functions
  
   {"dim", TOKENIZER_DIM},
   {"input", TOKENIZER_INPUT},

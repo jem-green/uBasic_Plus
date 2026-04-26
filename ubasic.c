@@ -51,6 +51,7 @@
 #include <stdlib.h> /* exit() */
 #include <string.h> /* strlen(), memcpy(), sprintf() */
 #include <stdint.h>
+#include <math.h> /* Math functions */
 
 // Probably private
 
@@ -855,6 +856,77 @@ static int factor(void) {
 	r = sinstr(j, s, s1);
 	break;	
  // end of string additions 
+ // math functions
+  case TOKENIZER_ABS:
+    accept(TOKENIZER_ABS);
+    accept(TOKENIZER_LEFTPAREN);
+    r = expr();
+    accept(TOKENIZER_RIGHTPAREN);
+    r = (r < 0) ? -r : r;
+    break;
+  case TOKENIZER_INT:
+    accept(TOKENIZER_INT);
+    accept(TOKENIZER_LEFTPAREN);
+    r = (int)floor((double)expr());
+    accept(TOKENIZER_RIGHTPAREN);
+    break;
+  case TOKENIZER_SGN:
+    accept(TOKENIZER_SGN);
+    accept(TOKENIZER_LEFTPAREN);
+    r = expr();
+    accept(TOKENIZER_RIGHTPAREN);
+    r = (r > 0) ? 1 : ((r < 0) ? -1 : 0);
+    break;
+  case TOKENIZER_SQR:
+    accept(TOKENIZER_SQR);
+    accept(TOKENIZER_LEFTPAREN);
+    r = (int)sqrt((double)expr());
+    accept(TOKENIZER_RIGHTPAREN);
+    break;
+  case TOKENIZER_RND:
+    accept(TOKENIZER_RND);
+    accept(TOKENIZER_LEFTPAREN);
+    j = expr();
+    accept(TOKENIZER_RIGHTPAREN);
+    r = (int)((rand() / (double)RAND_MAX) * j);
+    break;
+  case TOKENIZER_SIN:
+    accept(TOKENIZER_SIN);
+    accept(TOKENIZER_LEFTPAREN);
+    r = (int)(sin((double)expr()) * 1000);
+    accept(TOKENIZER_RIGHTPAREN);
+    break;
+  case TOKENIZER_COS:
+    accept(TOKENIZER_COS);
+    accept(TOKENIZER_LEFTPAREN);
+    r = (int)(cos((double)expr()) * 1000);
+    accept(TOKENIZER_RIGHTPAREN);
+    break;
+  case TOKENIZER_TAN:
+    accept(TOKENIZER_TAN);
+    accept(TOKENIZER_LEFTPAREN);
+    r = (int)(tan((double)expr()) * 1000);
+    accept(TOKENIZER_RIGHTPAREN);
+    break;
+  case TOKENIZER_ATN:
+    accept(TOKENIZER_ATN);
+    accept(TOKENIZER_LEFTPAREN);
+    r = (int)(atan((double)expr()) * 1000);
+    accept(TOKENIZER_RIGHTPAREN);
+    break;
+  case TOKENIZER_EXP:
+    accept(TOKENIZER_EXP);
+    accept(TOKENIZER_LEFTPAREN);
+    r = (int)exp((double)expr());
+    accept(TOKENIZER_RIGHTPAREN);
+    break;
+  case TOKENIZER_LOG:
+    accept(TOKENIZER_LOG);
+    accept(TOKENIZER_LEFTPAREN);
+    r = (int)(log((double)expr()) * 1000);
+    accept(TOKENIZER_RIGHTPAREN);
+    break;
+ // end of math functions
 	 
   case TOKENIZER_NUMBER:
     r = tokenizer_num();
