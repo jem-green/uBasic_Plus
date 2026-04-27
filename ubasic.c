@@ -942,6 +942,13 @@ static int factor(void) {
     r = varfactor();
     break;
   }
+  
+  /* Handle exponentiation (right-associative) */
+  if (tokenizer_token() == TOKENIZER_POWER) {
+    accept(TOKENIZER_POWER);
+    r = (int)pow((double)r, (double)factor());
+  }
+  
   DEBUG_PRINTF("term: %d.\n", r);
   return r;
 }
@@ -1002,9 +1009,7 @@ static VARIABLE_TYPE expr(void){
   op = tokenizer_token();
   DEBUG_PRINTF("expr: token %s.\n", tokenizer_token_name(op));
   while(op == TOKENIZER_PLUS ||
-       op == TOKENIZER_MINUS ||
-       op == TOKENIZER_AND ||
-       op == TOKENIZER_OR) {
+       op == TOKENIZER_MINUS) {
     tokenizer_next();
     t2 = term();
     DEBUG_PRINTF("expr: %d %d %d.\n", t1, op, t2);
@@ -1014,12 +1019,6 @@ static VARIABLE_TYPE expr(void){
       break;
     case TOKENIZER_MINUS:
       t1 = t1 - t2;
-      break;
-    case TOKENIZER_AND:
-      t1 = t1 & t2;
-      break;
-    case TOKENIZER_OR:
-      t1 = t1 | t2;
       break;
     }
     op = tokenizer_token();
@@ -1037,7 +1036,10 @@ static int relation(void){
   DEBUG_PRINTF("relation: token %d.\n", op);
   while(op == TOKENIZER_LT ||
        op == TOKENIZER_GT ||
-       op == TOKENIZER_EQ) {
+       op == TOKENIZER_EQ ||
+       op == TOKENIZER_NE ||
+       op == TOKENIZER_LE ||
+       op == TOKENIZER_GE) {
     tokenizer_next();
     r2 = expr();
     DEBUG_PRINTF("relation: %d %d %d.\n", r1, op, r2);
@@ -1050,6 +1052,15 @@ static int relation(void){
       break;
     case TOKENIZER_EQ:
       r1 = r1 == r2;
+      break;
+    case TOKENIZER_NE:
+      r1 = r1 != r2;
+      break;
+    case TOKENIZER_LE:
+      r1 = r1 <= r2;
+      break;
+    case TOKENIZER_GE:
+      r1 = r1 >= r2;
       break;
     }
     op = tokenizer_token();

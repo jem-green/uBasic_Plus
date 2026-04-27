@@ -172,10 +172,6 @@ static int singlechar(void){
     return TOKENIZER_PLUS;
   } else if(*ptr == '-') {
     return TOKENIZER_MINUS;
-  } else if(*ptr == '&') {
-    return TOKENIZER_AND;
-  } else if(*ptr == '|') {
-    return TOKENIZER_OR;
   } else if(*ptr == '*') {
     return TOKENIZER_ASTR;
   } else if(*ptr == '/') {
@@ -194,6 +190,8 @@ static int singlechar(void){
     return TOKENIZER_GT;
   } else if(*ptr == '=') {
     return TOKENIZER_EQ;
+  } else if(*ptr == '^') {
+    return TOKENIZER_POWER;
   }
   return 0;
 }
@@ -230,8 +228,19 @@ static int get_next_token(void) {
       }
     }
     DEBUG_PRINTF("get_next_token: error due to too long number.\n");
-    return TOKENIZER_ERROR;
-  } else if(singlechar()) {
+    return TOKENIZER_ERROR;  } else if(*ptr == '<' && (*(ptr + 1) == '=' || *(ptr + 1) == '>')) {
+    /* Two-character operators: <= or <> */
+    if(*(ptr + 1) == '=') {
+      nextptr = ptr + 2;
+      return TOKENIZER_LE;
+    } else {
+      nextptr = ptr + 2;
+      return TOKENIZER_NE;
+    }
+  } else if(*ptr == '>' && *(ptr + 1) == '=') {
+    /* Two-character operator: >= */
+    nextptr = ptr + 2;
+    return TOKENIZER_GE;  } else if(singlechar()) {
     nextptr = ptr + 1;
     return singlechar();
   } else if(*ptr == '"') {
