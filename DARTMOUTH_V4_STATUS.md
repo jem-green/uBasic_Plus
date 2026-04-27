@@ -16,6 +16,23 @@ This document tracks the implementation status of Dartmouth BASIC v4 features in
 - **Semicolon**: Concatenates with no spacing
 - **Test**: test-print.bas, test-print-valid.bas
 
+### ⚠️ READ/DATA/RESTORE Statements
+- **Status**: Implemented but UNTESTED (blocked by line numbering bug)
+- **Syntax**:
+  - `READ variable [, variable]*`
+  - `DATA constant [, constant]*`
+  - `RESTORE`
+- **Implementation**: Complete, based on working C# version
+- **Features**:
+  - Reads numeric/string values from DATA statements
+  - Supports numeric arrays (1D, 2D, 3D)
+  - Supports string variables (not string arrays)
+  - RESTORE resets data pointer to beginning
+  - Maintains position across multiple READ statements
+- **Blocker**: Programs with line numbers ≥10 fail (pre-existing bug)
+- **Test**: test-read1.bas, test-data-simple.bas (cannot run until line bug fixed)
+- **See**: SESSION_STATE.md for details
+
 ### ⚠️ CHANGE Statement
 - **Status**: Recognized but NOT IMPLEMENTED
 - **Syntax**: `CHANGE string_var TO numeric_var` or `CHANGE numeric_var TO string_var`
@@ -40,13 +57,22 @@ This document tracks the implementation status of Dartmouth BASIC v4 features in
 
 ## Removed Features
 
-### 🗑️ READ/DATA/RESTORE
-- **Status**: Removed (broken implementation)
+### 🗑️ READ/DATA/RESTORE (Old Implementation)
+- **Status**: Removed (broken implementation, replaced with working version)
 - **Reason**: Original implementation was incomplete and buggy
-- **Note**: Can be re-implemented from scratch if needed for Dartmouth v4 compliance
+- **Note**: Re-implemented from scratch based on working C# code (see above)
 
 ## Notes
 
 - All implementations follow dartmouth4_syntax.ebnf specification
 - PRINT zones use UBASIC_PRINT_ZONE_WIDTH constant (14 characters)
 - Changes follow COPILOT_C_CONTRACT.md: minimal modifications, extend rather than rewrite
+
+## Known Issues
+
+### Line Numbering Bug (BLOCKING)
+- **Symptom**: Programs with line numbers ≥10 fail silently
+- **Impact**: Cannot test READ/DATA/RESTORE with standard line numbering (10, 20, 30...)
+- **Status**: Under investigation
+- **Workaround**: Use line numbers 1-9 for testing
+- **Affected**: ALL programs, not specific to any feature

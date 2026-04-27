@@ -1,0 +1,5 @@
+10 PRINT "Before READ"
+20 READ A
+30 PRINT "After READ: "; A
+40 DATA 100
+50 END

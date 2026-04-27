@@ -1,0 +1,3 @@
+10 PRINT "Test"
+20 PRINT "Done"
+30 END

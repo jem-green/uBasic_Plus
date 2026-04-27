@@ -87,6 +87,9 @@ static const struct keyword_token keywords[] = {
 // end of math functions
   {"tab",                     TOKENIZER_TAB},
   {"change",                  TOKENIZER_CHANGE},
+  {"read",                    TOKENIZER_READ},
+  {"data",                    TOKENIZER_DATA},
+  {"restore",                 TOKENIZER_RESTORE},
  
   {"dim", TOKENIZER_DIM},
   {"input", TOKENIZER_INPUT},

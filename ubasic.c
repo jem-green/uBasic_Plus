@@ -60,6 +60,9 @@ typedef void (*poke_func)(VARIABLE_TYPE, VARIABLE_TYPE);
 static VARIABLE_TYPE expr(void);
 static void line_statement(void);
 static void statement(void);
+static void data_statement(void);
+static void restore_statement(void);
+static void read_statement(void);
 static void index_free(void);
 static void reset_control_state(void);
 static VARIABLE_TYPE expr(void);
@@ -71,6 +74,7 @@ static void for_push(for_state state);
 static for_state for_pop(void);
 
 static char const *program_ptr;
+static char const *data_ptr;  /* Current position in DATA statements */
 #define MAX_STRINGLEN 40
 static char string[MAX_STRINGLEN];
 
@@ -305,6 +309,7 @@ void ubasic_init(uint8_t *memory, uint32_t memory_bytes) {
   
   program_ptr = (char const *)(memory + UBASIC_MEM_PROGRAM_OFFSET);
   memory[UBASIC_MEM_PROGRAM_OFFSET] = '\0';
+  data_ptr = program_ptr;  /* Initialize DATA pointer to start of program */
   index_free();
   tokenizer_init(program_ptr);
   
@@ -390,6 +395,7 @@ void ubasic_load_program(const char *program) {
   /* Load program */
   memcpy(mem_base + UBASIC_MEM_PROGRAM_OFFSET, program, len + 1);
   program_ptr = (char const *)(mem_base + UBASIC_MEM_PROGRAM_OFFSET);
+  data_ptr = program_ptr;  /* Reset DATA pointer to start of new program */
   tokenizer_init(program_ptr);
   
   /* Reset heap - position heap_state after program */
@@ -1533,6 +1539,181 @@ static void change_statement(void){
   exit(1);
 }
 /*---------------------------------------------------------------------------*/
+static void data_statement(void){
+  /* DATA statement - skip during normal execution */
+  accept(TOKENIZER_DATA);
+  DEBUG_PRINTF("data_statement: Skipping DATA.\n");
+  tokenizer_skip();
+}
+/*---------------------------------------------------------------------------*/
+static void restore_statement(void){
+  /* RESTORE statement - reset DATA pointer to start of program */
+  accept(TOKENIZER_RESTORE);
+  accept(TOKENIZER_LF);
+  
+  data_ptr = tokenizer_start();
+  DEBUG_PRINTF("restore_statement: DATA pointer reset to start.\n");
+}
+/*---------------------------------------------------------------------------*/
+static void read_statement(void){
+  /* READ statement - read values from DATA statements
+   * Based on C# working implementation:
+   * 1. Save current tokenizer position
+   * 2. Initialize tokenizer at data_ptr
+   * 3. Search forward for next DATA statement
+   * 4. Read the next value from DATA
+   * 5. Update data_ptr
+   * 6. Restore tokenizer position
+   */
+  const char *saved_pos;
+  int var;
+  uint16_t idx1 = 0, idx2 = 0, idx3 = 0;
+  int is_array = 0;
+  int is_string = 0;
+  VARIABLE_TYPE value;
+  char str_value[MAX_STRINGLEN];
+  int found_data;
+  
+  accept(TOKENIZER_READ);
+  
+  /* Loop through variables to read */
+  do {
+    is_array = 0;
+    is_string = 0;
+    found_data = 0;
+    
+    /* Determine variable type */
+    if (tokenizer_token() == TOKENIZER_STRINGVARIABLE) {
+      is_string = 1;
+      var = tokenizer_variable_num();
+      accept(TOKENIZER_STRINGVARIABLE);
+      
+      /* String arrays not supported in current implementation */
+      if (tokenizer_token() == TOKENIZER_LEFTPAREN) {
+        DEBUG_PRINTF("read_statement: String arrays not supported\n");
+        exit(1);
+      }
+    } else if (tokenizer_token() == TOKENIZER_VARIABLE) {
+      var = tokenizer_variable_num();
+      accept(TOKENIZER_VARIABLE);
+      
+      /* Check for array indexing */
+      if (tokenizer_token() == TOKENIZER_LEFTPAREN) {
+        is_array = 1;
+        accept(TOKENIZER_LEFTPAREN);
+        idx1 = (uint16_t)expr();
+        if (tokenizer_token() == TOKENIZER_COMMA) {
+          accept(TOKENIZER_COMMA);
+          idx2 = (uint16_t)expr();
+          if (tokenizer_token() == TOKENIZER_COMMA) {
+            accept(TOKENIZER_COMMA);
+            idx3 = (uint16_t)expr();
+          }
+        }
+        accept(TOKENIZER_RIGHTPAREN);
+      }
+    } else {
+      DEBUG_PRINTF("read_statement: Expected variable\n");
+      exit(1);
+    }
+    
+    /* Save current tokenizer position */
+    saved_pos = tokenizer_pos();
+    
+    /* Search from data_ptr for next DATA value */
+    tokenizer_goto(data_ptr);
+    
+    /* Search for next DATA statement */
+    while (tokenizer_token() != TOKENIZER_ENDOFINPUT && !found_data) {
+      /* Skip to next line or DATA statement */
+      while (tokenizer_token() != TOKENIZER_LF &&
+             tokenizer_token() != TOKENIZER_DATA &&
+             tokenizer_token() != TOKENIZER_ENDOFINPUT) {
+        tokenizer_next();
+      }
+      
+      if (tokenizer_token() == TOKENIZER_DATA) {
+        accept(TOKENIZER_DATA);
+        found_data = 1;
+        break;
+      }
+      
+      if (tokenizer_token() == TOKENIZER_LF) {
+        tokenizer_next();
+      }
+    }
+    
+    if (!found_data) {
+      DEBUG_PRINTF("read_statement: Out of DATA\n");
+      tokenizer_goto(saved_pos);
+      exit(1);
+    }
+    
+    /* Read value from DATA statement */
+    if (is_string) {
+      /* Read string value */
+      if (tokenizer_token() == TOKENIZER_STRING) {
+        tokenizer_string(str_value, sizeof(str_value));
+        accept(TOKENIZER_STRING);
+      } else if (tokenizer_token() == TOKENIZER_NUMBER) {
+        /* Allow numbers in string variables */
+        snprintf(str_value, sizeof(str_value), "%d", tokenizer_num());
+        accept(TOKENIZER_NUMBER);
+      } else {
+        DEBUG_PRINTF("read_statement: Expected string or number in DATA\n");
+        tokenizer_goto(saved_pos);
+        exit(1);
+      }
+      
+      /* Assign to string variable */
+      set_stringvariable(var, str_value);
+    } else {
+      /* Read numeric value */
+      if (tokenizer_token() == TOKENIZER_NUMBER) {
+        value = tokenizer_num();
+        accept(TOKENIZER_NUMBER);
+      } else if (tokenizer_token() == TOKENIZER_STRING) {
+        /* Try to parse string as number */
+        tokenizer_string(str_value, sizeof(str_value));
+        value = atoi(str_value);
+        accept(TOKENIZER_STRING);
+      } else {
+        DEBUG_PRINTF("read_statement: Expected number in DATA\n");
+        tokenizer_goto(saved_pos);
+        exit(1);
+      }
+      
+      /* Assign to numeric variable */
+      if (is_array) {
+        set_array_element(var, idx1, idx2, idx3, value);
+      } else {
+        set_variable(var, value);
+      }
+    }
+    
+    /* Update data_ptr to current position (after the value we just read) */
+    /* Skip comma if present */
+    if (tokenizer_token() == TOKENIZER_COMMA) {
+      accept(TOKENIZER_COMMA);
+    }
+    data_ptr = tokenizer_pos();
+    
+    /* Restore tokenizer to READ statement */
+    tokenizer_goto(saved_pos);
+    
+    /* Check for more variables in READ */
+    if (tokenizer_token() == TOKENIZER_COMMA) {
+      accept(TOKENIZER_COMMA);
+    } else {
+      break;
+    }
+  } while (tokenizer_token() != TOKENIZER_LF && 
+           tokenizer_token() != TOKENIZER_ENDOFINPUT);
+  
+  accept(TOKENIZER_LF);
+  DEBUG_PRINTF("read_statement: READ complete.\n");
+}
+/*---------------------------------------------------------------------------*/
 static void if_statement(void){
   int r;
 
@@ -1909,6 +2090,15 @@ static void statement(void){
     break;
   case TOKENIZER_CHANGE:
     change_statement();
+    break;
+  case TOKENIZER_DATA:
+    data_statement();
+    break;
+  case TOKENIZER_RESTORE:
+    restore_statement();
+    break;
+  case TOKENIZER_READ:
+    read_statement();
     break;
   case TOKENIZER_END:
     end_statement();
