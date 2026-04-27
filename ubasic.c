@@ -1182,6 +1182,67 @@ static void goto_statement(void) {
   jump_linenum(tokenizer_num());
 }
 /*---------------------------------------------------------------------------*/
+static void on_statement(void) {
+  int index;
+  int line_numbers[20];
+  int count = 0;
+  int is_gosub;
+  
+  accept(TOKENIZER_ON);
+  
+  /* Evaluate expression to get index (1-based) */
+  index = expr();
+  
+  /* Determine if GOTO or GOSUB */
+  if (tokenizer_token() == TOKENIZER_GOTO) {
+    accept(TOKENIZER_GOTO);
+    is_gosub = 0;
+  } else if (tokenizer_token() == TOKENIZER_GOSUB) {
+    accept(TOKENIZER_GOSUB);
+    is_gosub = 1;
+  } else {
+    DEBUG_PRINTF("on_statement: Expected GOTO or GOSUB.\n");
+    ended = 1;
+    return;
+  }
+  
+  /* Parse comma-separated list of line numbers */
+  while (count < 20 && tokenizer_token() == TOKENIZER_NUMBER) {
+    line_numbers[count] = tokenizer_num();
+    count++;
+    accept(TOKENIZER_NUMBER);
+    
+    if (tokenizer_token() == TOKENIZER_COMMA) {
+      accept(TOKENIZER_COMMA);
+    } else {
+      break;
+    }
+  }
+  
+  accept(TOKENIZER_LF);
+  
+  /* Execute if index is in valid range (1-based) */
+  if (index >= 1 && index <= count) {
+    int target_line = line_numbers[index - 1];
+    
+    if (is_gosub) {
+      /* GOSUB: push return address and jump */
+      if (*gosub_depth_cell < UBASIC_MAX_GOSUB_STACK_DEPTH) {
+        gosub_push(tokenizer_num());
+        jump_linenum(target_line);
+      } else {
+        DEBUG_PRINTF("on_statement: gosub stack exhausted.\n");
+      }
+    } else {
+      /* GOTO: just jump */
+      jump_linenum(target_line);
+    }
+  }
+  /* If index out of range, continue to next statement (do nothing) */
+  
+  DEBUG_PRINTF("on_statement: index=%d, count=%d, is_gosub=%d\n", index, count, is_gosub);
+}
+/*---------------------------------------------------------------------------*/
 static void print_statement(void) {
   // string additions
   static char buf[128];
@@ -1723,6 +1784,9 @@ static void statement(void){
     break;
   case TOKENIZER_NEXT:
     next_statement();
+    break;
+  case TOKENIZER_ON:
+    on_statement();
     break;
   case TOKENIZER_END:
     end_statement();
