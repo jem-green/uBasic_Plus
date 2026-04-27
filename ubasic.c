@@ -83,6 +83,8 @@ static int32_t *gosub_stack_mem = NULL;
 static for_state *for_stack = NULL;
 static heap_state_t *heap_state = NULL;
 
+
+
 // string additions
 #define MAX_STRINGVARLEN UBASIC_STRING_VAR_MAXLEN
 #define MAX_BUFFERLEN    4000
@@ -342,6 +344,7 @@ static void reset_control_state(void) {
   if (for_stack != NULL) {
     memset(for_stack, 0, UBASIC_MAX_FOR_STACK_DEPTH * sizeof(for_state));
   }
+  
   ended = 0;
 }
 /*---------------------------------------------------------------------------*/
@@ -1250,34 +1253,92 @@ static void print_statement(void) {
   // end of string additions
   accept(TOKENIZER_PRINT);
   DEBUG_PRINTF("print_statement: Loop.\n");
-  do {
+  
+  // EBNF: "PRINT" list , { ("," | ";") , list }
+  // list = string | variable | expression | tab_function
+  
+  // Process first list item if present (PRINT alone is valid for blank line)
+  if(tokenizer_token() != TOKENIZER_LF && 
+     tokenizer_token() != TOKENIZER_ENDOFINPUT &&
+     tokenizer_token() != TOKENIZER_CR) {
+    
+    // Process list item
     if(tokenizer_token() == TOKENIZER_STRING) {
       tokenizer_string(string, sizeof(string));
-	  sprintf(buf+strlen(buf), "%s", string);
+      sprintf(buf+strlen(buf), "%s", string);
       tokenizer_next();
-    } else if(tokenizer_token() == TOKENIZER_COMMA) {
-      sprintf(buf+strlen(buf), "%s", " ");
+    } else if(tokenizer_token() == TOKENIZER_TAB) {
       tokenizer_next();
-    } else if(tokenizer_token() == TOKENIZER_SEMICOLON) {
-      tokenizer_next();
-    } else if(tokenizer_token() == TOKENIZER_VARIABLE ||
-      tokenizer_token() == TOKENIZER_NUMBER) {
-      sprintf(buf+strlen(buf), "%d", expr());
-	} else if (tokenizer_token() == TOKENIZER_CR){
-		tokenizer_next();
+      accept(TOKENIZER_LEFTPAREN);
+      int target_col = expr();
+      accept(TOKENIZER_RIGHTPAREN);
+      int current_col = strlen(buf);
+      if (target_col > current_col && target_col < sizeof(buf)) {
+        memset(buf + current_col, ' ', target_col - current_col);
+        buf[target_col] = '\0';
+      }
     } else {
-	  // string additions
+      // variable or expression (or string expression)
       if (tokenizer_stringlookahead()) {
-          sprintf(buf+strlen(buf), "%s", sexpr());
+        sprintf(buf+strlen(buf), "%s", sexpr());
       } else {
-         sprintf(buf+strlen(buf), "%d", expr());
-	  }
-	  // end of string additions
-	  break;
-	  
+        sprintf(buf+strlen(buf), "%d", expr());
+      }
     }
-  } while(tokenizer_token() != TOKENIZER_LF &&
-	  tokenizer_token() != TOKENIZER_ENDOFINPUT);
+    
+    // Process { ("," | ";") , list }
+    while(tokenizer_token() == TOKENIZER_COMMA || 
+          tokenizer_token() == TOKENIZER_SEMICOLON) {
+      
+      // Process separator
+      if(tokenizer_token() == TOKENIZER_COMMA) {
+        int current_col = strlen(buf);
+        int next_zone = ((current_col / UBASIC_PRINT_ZONE_WIDTH) + 1) * UBASIC_PRINT_ZONE_WIDTH;
+        if (next_zone < sizeof(buf)) {
+          memset(buf + current_col, ' ', next_zone - current_col);
+          buf[next_zone] = '\0';
+        }
+        tokenizer_next();
+      } else { // TOKENIZER_SEMICOLON
+        tokenizer_next();
+      }
+      
+      // After separator, process list item (required by EBNF)
+      if(tokenizer_token() == TOKENIZER_STRING) {
+        tokenizer_string(string, sizeof(string));
+        sprintf(buf+strlen(buf), "%s", string);
+        tokenizer_next();
+      } else if(tokenizer_token() == TOKENIZER_TAB) {
+        tokenizer_next();
+        accept(TOKENIZER_LEFTPAREN);
+        int target_col = expr();
+        accept(TOKENIZER_RIGHTPAREN);
+        int current_col = strlen(buf);
+        if (target_col > current_col && target_col < sizeof(buf)) {
+          memset(buf + current_col, ' ', target_col - current_col);
+          buf[target_col] = '\0';
+        }
+      } else if(tokenizer_token() == TOKENIZER_LF || 
+                tokenizer_token() == TOKENIZER_ENDOFINPUT ||
+                tokenizer_token() == TOKENIZER_CR) {
+        // Trailing separator - valid in BASIC, just ends the line
+        break;
+      } else {
+        // variable or expression (or string expression)
+        if (tokenizer_stringlookahead()) {
+          sprintf(buf+strlen(buf), "%s", sexpr());
+        } else {
+          sprintf(buf+strlen(buf), "%d", expr());
+        }
+      }
+    }
+  }
+  
+  // Handle CR if present
+  if(tokenizer_token() == TOKENIZER_CR) {
+    tokenizer_next();
+  }
+  
   out_function(buf);
   out_function("\n");
   DEBUG_PRINTF("print_statement: End of print.\n");
@@ -1412,6 +1473,64 @@ static void input_statement(void) {
   
   accept(TOKENIZER_LF);
   DEBUG_PRINTF("input_statement: Input complete.\n");
+}
+/*---------------------------------------------------------------------------*/
+static void change_statement(void){
+  /* CHANGE statement - dropped in Dartmouth BASIC v5
+   * Syntax: CHANGE string_var TO numeric_var
+   *     or: CHANGE numeric_var TO string_var
+   * This statement is recognized but not implemented.
+   */
+  accept(TOKENIZER_CHANGE);
+  
+  /* Parse the first variable (either string or numeric) */
+  if (tokenizer_token() == TOKENIZER_STRINGVARIABLE) {
+    accept(TOKENIZER_STRINGVARIABLE);
+  } else if (tokenizer_token() == TOKENIZER_VARIABLE) {
+    accept(TOKENIZER_VARIABLE);
+    /* Handle potential array indexing */
+    if (tokenizer_token() == TOKENIZER_LEFTPAREN) {
+      accept(TOKENIZER_LEFTPAREN);
+      expr();
+      if (tokenizer_token() == TOKENIZER_COMMA) {
+        accept(TOKENIZER_COMMA);
+        expr();
+      }
+      accept(TOKENIZER_RIGHTPAREN);
+    }
+  } else {
+    DEBUG_PRINTF("change_statement: Expected variable\n");
+    exit(1);
+  }
+  
+  /* Accept TO keyword */
+  accept(TOKENIZER_TO);
+  
+  /* Parse the second variable (either string or numeric) */
+  if (tokenizer_token() == TOKENIZER_STRINGVARIABLE) {
+    accept(TOKENIZER_STRINGVARIABLE);
+  } else if (tokenizer_token() == TOKENIZER_VARIABLE) {
+    accept(TOKENIZER_VARIABLE);
+    /* Handle potential array indexing */
+    if (tokenizer_token() == TOKENIZER_LEFTPAREN) {
+      accept(TOKENIZER_LEFTPAREN);
+      expr();
+      if (tokenizer_token() == TOKENIZER_COMMA) {
+        accept(TOKENIZER_COMMA);
+        expr();
+      }
+      accept(TOKENIZER_RIGHTPAREN);
+    }
+  } else {
+    DEBUG_PRINTF("change_statement: Expected variable\n");
+    exit(1);
+  }
+  
+  accept(TOKENIZER_LF);
+  
+  /* CHANGE is not implemented - was dropped in Dartmouth BASIC v5 */
+  DEBUG_PRINTF("CHANGE statement not implemented (dropped in Dartmouth BASIC v5)\n");
+  exit(1);
 }
 /*---------------------------------------------------------------------------*/
 static void if_statement(void){
@@ -1787,6 +1906,9 @@ static void statement(void){
     break;
   case TOKENIZER_ON:
     on_statement();
+    break;
+  case TOKENIZER_CHANGE:
+    change_statement();
     break;
   case TOKENIZER_END:
     end_statement();

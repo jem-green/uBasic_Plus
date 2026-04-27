@@ -85,6 +85,8 @@ typedef void (*poke_func)(VARIABLE_TYPE, VARIABLE_TYPE);
 #define UBASIC_HEAP_BYTES 0
 #endif
 
+#define UBASIC_PRINT_ZONE_WIDTH 14
+
 typedef struct for_state {
   int32_t line_after_for;
   int32_t for_variable_index; /* 0..51 (a-z then A-Z) */
