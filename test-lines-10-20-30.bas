@@ -1,0 +1,3 @@
+10 PRINT "line 10"
+20 PRINT "line 20"
+30 END

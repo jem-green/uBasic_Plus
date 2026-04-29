@@ -1,2 +1,2 @@
-8 print "test"
-9 end
+8 PRINT "test"
+9 END

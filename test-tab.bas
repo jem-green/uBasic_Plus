@@ -1,24 +1,24 @@
-10 print "TAB FUNCTION TEST"
-20 print "="
-30 print "Basic TAB usage:"
-40 print "A";tab(10);"B";tab(20);"C"
-50 print "="
-60 print "TAB with values:"
-70 print tab(5);"Indented 5"
-80 print tab(10);"Indented 10"
-90 print tab(15);"Indented 15"
-100 print "="
-110 print "TAB with variables:"
-120 let x = 5
-130 print tab(x);"Column";x
-140 print tab(x*2);"Column";x*2
-150 print tab(x*3);"Column";x*3
-160 print "="
-170 print "Table formatting:"
-180 print "NAME";tab(15);"AGE";tab(25);"SCORE"
-190 print "----";tab(15);"---";tab(25);"-----"
-200 print "ALICE";tab(15);25;tab(25);95
-210 print "BOB";tab(15);30;tab(25);87
-220 print "CHARLIE";tab(15);22;tab(25);92
-230 print "="
-240 end
+10 PRINT "TAB FUNCTION TEST"
+20 PRINT "="
+30 PRINT "Basic TAB usage:"
+40 PRINT "A";TAB(10);"B";TAB(20);"C"
+50 PRINT "="
+60 PRINT "TAB with values:"
+70 PRINT TAB(5);"Indented 5"
+80 PRINT TAB(10);"Indented 10"
+90 PRINT TAB(15);"Indented 15"
+100 PRINT "="
+110 PRINT "TAB with variables:"
+120 LET x = 5
+130 PRINT TAB(x);"Column";x
+140 PRINT TAB(x*2);"Column";x*2
+150 PRINT TAB(x*3);"Column";x*3
+160 PRINT "="
+170 PRINT "Table formatting:"
+180 PRINT "NAME";TAB(15);"AGE";TAB(25);"SCORE"
+190 PRINT "----";TAB(15);"---";TAB(25);"-----"
+200 PRINT "ALICE";TAB(15);25;TAB(25);95
+210 PRINT "BOB";TAB(15);30;TAB(25);87
+220 PRINT "CHARLIE";TAB(15);22;TAB(25);92
+230 PRINT "="
+240 END

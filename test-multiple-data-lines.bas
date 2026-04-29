@@ -1,0 +1,9 @@
+1 DATA 100
+2 DATA 200
+3 DATA 300
+4 READ a
+5 PRINT "a=";a
+6 READ b
+7 PRINT "b=";b
+8 READ c
+9 PRINT "c=";c

@@ -1,0 +1,4 @@
+5 PRINT "start"
+6 DATA 100
+7 PRINT "END"
+8 END

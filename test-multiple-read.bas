@@ -1,0 +1,8 @@
+1 DATA 100,200,300
+2 READ a
+3 PRINT "a=";a
+4 READ b
+5 PRINT "b=";b
+6 READ c
+7 PRINT "c=";c
+8 END

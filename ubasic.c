@@ -74,7 +74,6 @@ static void for_push(for_state state);
 static for_state for_pop(void);
 
 static char const *program_ptr;
-static char const *data_ptr;  /* Current position in DATA statements */
 #define MAX_STRINGLEN 40
 static char string[MAX_STRINGLEN];
 
@@ -83,6 +82,7 @@ static size_t mem_capacity_bytes = 0;
 static int32_t *resume_offset_cell = NULL;
 static int32_t *gosub_depth_cell = NULL;
 static int32_t *for_depth_cell = NULL;
+static int32_t *data_ptr_cell = NULL;
 static int32_t *gosub_stack_mem = NULL;
 static for_state *for_stack = NULL;
 static heap_state_t *heap_state = NULL;
@@ -295,6 +295,7 @@ void ubasic_init(uint8_t *memory, uint32_t memory_bytes) {
   resume_offset_cell = (int32_t *)(memory + UBASIC_MEM_RESUME_OFFSET);
   gosub_depth_cell = (int32_t *)(memory + UBASIC_MEM_GOSUB_DEPTH_OFFSET);
   for_depth_cell = (int32_t *)(memory + UBASIC_MEM_FOR_DEPTH_OFFSET);
+  data_ptr_cell = (int32_t *)(memory + UBASIC_MEM_DATA_PTR_OFFSET);
   gosub_stack_mem = (int32_t *)(memory + UBASIC_MEM_GOSUB_STACK_OFFSET);
   for_stack = (for_state *)(memory + UBASIC_MEM_FOR_STACK_OFFSET);
   
@@ -309,7 +310,7 @@ void ubasic_init(uint8_t *memory, uint32_t memory_bytes) {
   
   program_ptr = (char const *)(memory + UBASIC_MEM_PROGRAM_OFFSET);
   memory[UBASIC_MEM_PROGRAM_OFFSET] = '\0';
-  data_ptr = program_ptr;  /* Initialize DATA pointer to start of program */
+  *data_ptr_cell = 0;  /* Initialize DATA pointer to start of program */
   index_free();
   tokenizer_init(program_ptr);
   
@@ -342,6 +343,9 @@ static void reset_control_state(void) {
   }
   if (for_depth_cell != NULL) {
     *for_depth_cell = 0;
+  }
+  if (data_ptr_cell != NULL) {
+    *data_ptr_cell = 0;
   }
   if (gosub_stack_mem != NULL) {
     memset(gosub_stack_mem, 0, UBASIC_MAX_GOSUB_STACK_DEPTH * sizeof(int32_t));
@@ -395,7 +399,7 @@ void ubasic_load_program(const char *program) {
   /* Load program */
   memcpy(mem_base + UBASIC_MEM_PROGRAM_OFFSET, program, len + 1);
   program_ptr = (char const *)(mem_base + UBASIC_MEM_PROGRAM_OFFSET);
-  data_ptr = program_ptr;  /* Reset DATA pointer to start of new program */
+  *data_ptr_cell = 0;  /* Reset DATA pointer to start of new program */
   tokenizer_init(program_ptr);
   
   /* Reset heap - position heap_state after program */
@@ -1551,7 +1555,7 @@ static void restore_statement(void){
   accept(TOKENIZER_RESTORE);
   accept(TOKENIZER_LF);
   
-  data_ptr = tokenizer_start();
+  *data_ptr_cell = 0;  /* Reset to program start */
   DEBUG_PRINTF("restore_statement: DATA pointer reset to start.\n");
 }
 /*---------------------------------------------------------------------------*/
@@ -1559,13 +1563,14 @@ static void read_statement(void){
   /* READ statement - read values from DATA statements
    * Based on C# working implementation:
    * 1. Save current tokenizer position
-   * 2. Initialize tokenizer at data_ptr
+   * 2. Initialize tokenizer at data_ptr offset
    * 3. Search forward for next DATA statement
    * 4. Read the next value from DATA
-   * 5. Update data_ptr
+   * 5. Update data_ptr offset
    * 6. Restore tokenizer position
    */
   const char *saved_pos;
+  const char *data_pos;
   int var;
   uint16_t idx1 = 0, idx2 = 0, idx3 = 0;
   int is_array = 0;
@@ -1620,26 +1625,44 @@ static void read_statement(void){
     /* Save current tokenizer position */
     saved_pos = tokenizer_pos();
     
-    /* Search from data_ptr for next DATA value */
-    tokenizer_goto(data_ptr);
+    /* Calculate data_pos from offset and start searching */
+    data_pos = tokenizer_start() + *data_ptr_cell;
+    tokenizer_goto(data_pos);
+    DEBUG_PRINTF("read_statement: Starting search from offset %d, next 10 chars: '%.10s'\n", 
+                 *data_ptr_cell, data_pos);
     
-    /* Search for next DATA statement */
-    while (tokenizer_token() != TOKENIZER_ENDOFINPUT && !found_data) {
-      /* Skip to next line or DATA statement */
-      while (tokenizer_token() != TOKENIZER_LF &&
-             tokenizer_token() != TOKENIZER_DATA &&
-             tokenizer_token() != TOKENIZER_ENDOFINPUT) {
-        tokenizer_next();
-      }
-      
-      if (tokenizer_token() == TOKENIZER_DATA) {
-        accept(TOKENIZER_DATA);
-        found_data = 1;
-        break;
-      }
-      
-      if (tokenizer_token() == TOKENIZER_LF) {
-        tokenizer_next();
+    /* Check if we're continuing from a previous DATA line (data_ptr_cell > 0 and we're at a value) */
+    if (*data_ptr_cell > 0 && (tokenizer_token() == TOKENIZER_NUMBER || tokenizer_token() == TOKENIZER_STRING)) {
+      /* We're positioned at the next value in the same DATA line, no need to search */
+      found_data = 1;
+      DEBUG_PRINTF("read_statement: Continuing from previous DATA line\n");
+    } else {
+      /* Search for next DATA statement */
+      DEBUG_PRINTF("read_statement: Searching for DATA statement\n");
+      while (tokenizer_token() != TOKENIZER_ENDOFINPUT && !found_data) {
+        /* Skip to next line or DATA statement */
+        while (tokenizer_token() != TOKENIZER_LF &&
+               tokenizer_token() != TOKENIZER_DATA &&
+               tokenizer_token() != TOKENIZER_REM &&
+               tokenizer_token() != TOKENIZER_ENDOFINPUT) {
+          tokenizer_next();
+        }
+        
+        if (tokenizer_token() == TOKENIZER_DATA) {
+          accept(TOKENIZER_DATA);
+          found_data = 1;
+          break;
+        }
+        
+        if (tokenizer_token() == TOKENIZER_REM) {
+          /* Skip REM comments - go to end of line */
+          tokenizer_skip();
+          continue;
+        }
+        
+        if (tokenizer_token() == TOKENIZER_LF) {
+          tokenizer_next();
+        }
       }
     }
     
@@ -1649,11 +1672,15 @@ static void read_statement(void){
       exit(1);
     }
     
+    DEBUG_PRINTF("read_statement: After finding DATA, token=%d, at '%.20s'\n", 
+                 tokenizer_token(), tokenizer_pos());
+    
     /* Read value from DATA statement */
     if (is_string) {
       /* Read string value */
       if (tokenizer_token() == TOKENIZER_STRING) {
         tokenizer_string(str_value, sizeof(str_value));
+        DEBUG_PRINTF("read_statement: Read string value '%s'\n", str_value);
         accept(TOKENIZER_STRING);
       } else if (tokenizer_token() == TOKENIZER_NUMBER) {
         /* Allow numbers in string variables */
@@ -1666,12 +1693,15 @@ static void read_statement(void){
       }
       
       /* Assign to string variable */
+      DEBUG_PRINTF("read_statement: Setting string var %d to '%s'\n", var, str_value);
       set_stringvariable(var, str_value);
     } else {
       /* Read numeric value */
       if (tokenizer_token() == TOKENIZER_NUMBER) {
+        DEBUG_PRINTF("read_statement: About to read number at '%.10s'\n", tokenizer_pos());
         value = tokenizer_num();
         accept(TOKENIZER_NUMBER);
+        DEBUG_PRINTF("read_statement: Read numeric value %d\n", (int)value);
       } else if (tokenizer_token() == TOKENIZER_STRING) {
         /* Try to parse string as number */
         tokenizer_string(str_value, sizeof(str_value));
@@ -1691,12 +1721,15 @@ static void read_statement(void){
       }
     }
     
-    /* Update data_ptr to current position (after the value we just read) */
+    /* Update data_ptr_cell offset to current position (after the value we just read) */
     /* Skip comma if present */
     if (tokenizer_token() == TOKENIZER_COMMA) {
       accept(TOKENIZER_COMMA);
     }
-    data_ptr = tokenizer_pos();
+    *data_ptr_cell = (int32_t)(tokenizer_pos() - tokenizer_start());
+    DEBUG_PRINTF("read_statement: Updated data_ptr_cell to %d, char='%c'\n", 
+                 *data_ptr_cell, 
+                 *data_ptr_cell < 100 ? *(tokenizer_start() + *data_ptr_cell) : '?');
     
     /* Restore tokenizer to READ statement */
     tokenizer_goto(saved_pos);

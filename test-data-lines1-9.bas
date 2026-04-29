@@ -1,0 +1,4 @@
+1 DATA 100
+2 READ a
+3 PRINT a
+4 END

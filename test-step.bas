@@ -1,15 +1,15 @@
-10 print "STEP TEST PROGRAM"
-20 print "COUNT BY 2S:"
-30 for i = 0 to 10 step 2
-40 print i
-50 next i
-60 print "COUNT DOWN:"
-70 for j = 10 to 1 step -1
-80 print j
-90 next j
-100 print "DEFAULT STEP:"
-110 for k = 1 to 5
-120 print k
-130 next k
-140 print "DONE"
-150 end
+10 PRINT "STEP TEST PROGRAM"
+20 PRINT "COUNT BY 2S:"
+30 FOR i = 0 TO 10 STEP 2
+40 PRINT i
+50 NEXT i
+60 PRINT "COUNT DOWN:"
+70 FOR j = 10 TO 1 STEP -1
+80 PRINT j
+90 NEXT j
+100 PRINT "DEFAULT STEP:"
+110 FOR k = 1 TO 5
+120 PRINT k
+130 NEXT k
+140 PRINT "DONE"
+150 END

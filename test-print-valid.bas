@@ -1,21 +1,21 @@
-10 rem VALID Dartmouth v4 PRINT syntax examples
-20 print "Test 1: Semicolon concatenates"
-30 print "A";"B";"C"
-40 print "="
-50 print "Test 2: Comma uses 14-char zones"
-60 print "A","B","C"
-70 print "="
-80 print "Test 3: Mixed separators"
-90 print "Name:";"Alice","Age:";25
-100 print "="
-110 print "Test 4: TAB requires semicolon"
-120 print "A";tab(10);"B"
-130 print "="
-140 print "Test 5: Trailing separator is valid"
-150 print "Text",
-160 print "More text"
-170 print "="
-180 print "Test 6: PRINT alone prints blank line"
-190 print
-200 print "Done"
-210 end
+10 REM VALID Dartmouth v4 PRINT syntax examples
+20 PRINT "Test 1: Semicolon concatenates"
+30 PRINT "A";"B";"C"
+40 PRINT "="
+50 PRINT "Test 2: Comma uses 14-char zones"
+60 PRINT "A","B","C"
+70 PRINT "="
+80 PRINT "Test 3: Mixed separators"
+90 PRINT "Name:";"Alice","Age:";25
+100 PRINT "="
+110 PRINT "Test 4: TAB requires semicolon"
+120 PRINT "A";TAB(10);"B"
+130 PRINT "="
+140 PRINT "Test 5: Trailing separator is valid"
+150 PRINT "Text",
+160 PRINT "More text"
+170 PRINT "="
+180 PRINT "Test 6: PRINT alone prints blank line"
+190 PRINT
+200 PRINT "Done"
+210 END

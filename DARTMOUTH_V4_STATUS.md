@@ -16,22 +16,27 @@ This document tracks the implementation status of Dartmouth BASIC v4 features in
 - **Semicolon**: Concatenates with no spacing
 - **Test**: test-print.bas, test-print-valid.bas
 
-### ⚠️ READ/DATA/RESTORE Statements
-- **Status**: Implemented but UNTESTED (blocked by line numbering bug)
+### ✅ READ/DATA/RESTORE Statements
+- **Status**: ✅ Fully implemented and tested
 - **Syntax**:
   - `READ variable [, variable]*`
   - `DATA constant [, constant]*`
   - `RESTORE`
-- **Implementation**: Complete, based on working C# version
+- **Implementation**: Based on working C# pattern with offset-based data pointer
 - **Features**:
   - Reads numeric/string values from DATA statements
   - Supports numeric arrays (1D, 2D, 3D)
   - Supports string variables (not string arrays)
   - RESTORE resets data pointer to beginning
   - Maintains position across multiple READ statements
-- **Blocker**: Programs with line numbers ≥10 fail (pre-existing bug)
-- **Test**: test-read1.bas, test-data-simple.bas (cannot run until line bug fixed)
-- **See**: SESSION_STATE.md for details
+  - Skips REM comments when searching for DATA
+- **Bug Fix**: Fixed READ statement finding "DATA" keyword inside REM comments
+- **Tests**: 
+  - test-data-simple.bas ✅ (basic READ/DATA)
+  - test-data-multiple.bas ✅ (multiple DATA statements)
+  - test-data-restore.bas ✅ (RESTORE functionality)
+  - test-data-string.bas ✅ (string variables)
+  - test-data-debug.bas ✅ (single value)
 
 ### ⚠️ CHANGE Statement
 - **Status**: Recognized but NOT IMPLEMENTED
@@ -67,12 +72,4 @@ This document tracks the implementation status of Dartmouth BASIC v4 features in
 - All implementations follow dartmouth4_syntax.ebnf specification
 - PRINT zones use UBASIC_PRINT_ZONE_WIDTH constant (14 characters)
 - Changes follow COPILOT_C_CONTRACT.md: minimal modifications, extend rather than rewrite
-
-## Known Issues
-
-### Line Numbering Bug (BLOCKING)
-- **Symptom**: Programs with line numbers ≥10 fail silently
-- **Impact**: Cannot test READ/DATA/RESTORE with standard line numbering (10, 20, 30...)
-- **Status**: Under investigation
-- **Workaround**: Use line numbers 1-9 for testing
-- **Affected**: ALL programs, not specific to any feature
+- Keywords are UPPERCASE (case-insensitive matching), variables are lowercase (case-sensitive a≠A)

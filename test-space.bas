@@ -1,2 +1,2 @@
-10 print "hello" "jeremy"
-20 end
+10 PRINT "hello" "jeremy"
+20 END

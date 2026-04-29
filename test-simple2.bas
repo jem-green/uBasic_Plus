@@ -1,3 +1,3 @@
-1 print "test"
-2 print "done"
-3 end
+1 PRINT "test"
+2 PRINT "done"
+3 END

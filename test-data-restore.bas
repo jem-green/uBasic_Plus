@@ -1,8 +1,8 @@
 10 REM RESTORE TEST
-20 READ A, B
-30 PRINT "First: A="; A; " B="; B
+20 READ a, b
+30 PRINT "First: A="; a; " B="; b
 40 RESTORE
-50 READ C, D
-60 PRINT "After RESTORE: C="; C; " D="; D
+50 READ c, d
+60 PRINT "After RESTORE: C="; c; " D="; d
 70 DATA 100, 200
 80 END

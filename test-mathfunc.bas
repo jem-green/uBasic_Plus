@@ -1,41 +1,41 @@
-10 print "MATH FUNCTIONS TEST"
-20 print ""
-30 print "ABS FUNCTION:"
-40 print "ABS(-5) = "; abs(-5)
-50 print "ABS(10) = "; abs(10)
-60 print ""
-70 print "INT FUNCTION:"
-80 print "INT(5) = "; int(5)
-90 print "INT(-3) = "; int(-3)
-100 print ""
-110 print "SGN FUNCTION:"
-120 print "SGN(-10) = "; sgn(-10)
-130 print "SGN(0) = "; sgn(0)
-140 print "SGN(10) = "; sgn(10)
-150 print ""
-160 print "SQR FUNCTION:"
-170 print "SQR(16) = "; sqr(16)
-180 print "SQR(25) = "; sqr(25)
-190 print "SQR(100) = "; sqr(100)
-200 print ""
-210 print "RND FUNCTION:"
-220 print "RND(10) = "; rnd(10)
-230 print "RND(100) = "; rnd(100)
-240 print ""
-250 print "TRIG FUNCTIONS (x1000):"
-260 print "SIN(0) = "; sin(0)
-270 print "COS(0) = "; cos(0)
-280 print "TAN(0) = "; tan(0)
-290 print "ATN(0) = "; atn(0)
-300 print "ATN(1) = "; atn(1)
-310 print ""
-320 print "EXP FUNCTION:"
-330 print "EXP(0) = "; exp(0)
-340 print "EXP(1) = "; exp(1)
-350 print ""
-360 print "LOG FUNCTION (x1000):"
-370 print "LOG(1) = "; log(1)
-380 print "LOG(2) = "; log(2)
-390 print ""
-400 print "DONE"
-410 end
+10 PRINT "MATH FUNCTIONS TEST"
+20 PRINT ""
+30 PRINT "ABS FUNCTION:"
+40 PRINT "ABS(-5) = "; ABS(-5)
+50 PRINT "ABS(10) = "; ABS(10)
+60 PRINT ""
+70 PRINT "INT FUNCTION:"
+80 PRINT "INT(5) = "; INT(5)
+90 PRINT "INT(-3) = "; INT(-3)
+100 PRINT ""
+110 PRINT "SGN FUNCTION:"
+120 PRINT "SGN(-10) = "; SGN(-10)
+130 PRINT "SGN(0) = "; SGN(0)
+140 PRINT "SGN(10) = "; SGN(10)
+150 PRINT ""
+160 PRINT "SQR FUNCTION:"
+170 PRINT "SQR(16) = "; SQR(16)
+180 PRINT "SQR(25) = "; SQR(25)
+190 PRINT "SQR(100) = "; SQR(100)
+200 PRINT ""
+210 PRINT "RND FUNCTION:"
+220 PRINT "RND(10) = "; RND(10)
+230 PRINT "RND(100) = "; RND(100)
+240 PRINT ""
+250 PRINT "TRIG FUNCTIONS (x1000):"
+260 PRINT "SIN(0) = "; SIN(0)
+270 PRINT "COS(0) = "; COS(0)
+280 PRINT "TAN(0) = "; TAN(0)
+290 PRINT "ATN(0) = "; ATN(0)
+300 PRINT "ATN(1) = "; ATN(1)
+310 PRINT ""
+320 PRINT "EXP FUNCTION:"
+330 PRINT "EXP(0) = "; EXP(0)
+340 PRINT "EXP(1) = "; EXP(1)
+350 PRINT ""
+360 PRINT "LOG FUNCTION (x1000):"
+370 PRINT "LOG(1) = "; LOG(1)
+380 PRINT "LOG(2) = "; LOG(2)
+390 PRINT ""
+400 PRINT "DONE"
+410 END

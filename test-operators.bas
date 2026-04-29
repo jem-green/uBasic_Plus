@@ -1,32 +1,32 @@
-10 print "OPERATOR TEST PROGRAM"
-20 print ""
-30 print "RELATIONAL OPERATORS:"
-40 let a = 5
-50 let b = 10
-60 print "A = "; a
-70 print "B = "; b
-80 if a < b then print "A < B: TRUE"
-90 if a > b then print "A > B: FALSE (skipped)"
-100 if a = b then print "A = B: FALSE (skipped)"
-110 if a <> b then print "A <> B: TRUE"
-120 if a <= b then print "A <= B: TRUE"
-130 if a >= b then print "A >= B: FALSE (skipped)"
-140 print ""
-150 print "EQUAL VALUES:"
-160 let c = 7
-170 let d = 7
-180 print "C = "; c
-190 print "D = "; d
-200 if c = d then print "C = D: TRUE"
-210 if c <> d then print "C <> D: FALSE (skipped)"
-220 if c <= d then print "C <= D: TRUE"
-230 if c >= d then print "C >= D: TRUE"
-240 print ""
-250 print "EXPONENTIATION:"
-260 print "2 ^ 3 = "; 2 ^ 3
-270 print "5 ^ 2 = "; 5 ^ 2
-280 print "3 ^ 4 = "; 3 ^ 4
-290 print "10 ^ 2 = "; 10 ^ 2
-300 print ""
-310 print "DONE"
-320 end
+10 PRINT "OPERATOR TEST PROGRAM"
+20 PRINT ""
+30 PRINT "RELATIONAL OPERATORS:"
+40 LET a = 5
+50 LET b = 10
+60 PRINT "A = "; a
+70 PRINT "B = "; b
+80 IF a < b THEN PRINT "A < B: TRUE"
+90 IF a > b THEN PRINT "A > B: FALSE (skipped)"
+100 IF a = b THEN PRINT "A = B: FALSE (skipped)"
+110 IF a <> b THEN PRINT "A <> B: TRUE"
+120 IF a <= b THEN PRINT "A <= B: TRUE"
+130 IF a >= b THEN PRINT "A >= B: FALSE (skipped)"
+140 PRINT ""
+150 PRINT "EQUAL VALUES:"
+160 LET c = 7
+170 LET d = 7
+180 PRINT "C = "; c
+190 PRINT "D = "; d
+200 IF c = d THEN PRINT "C = D: TRUE"
+210 IF c <> d THEN PRINT "C <> D: FALSE (skipped)"
+220 IF c <= d THEN PRINT "C <= D: TRUE"
+230 IF c >= d THEN PRINT "C >= D: TRUE"
+240 PRINT ""
+250 PRINT "EXPONENTIATION:"
+260 PRINT "2 ^ 3 = "; 2 ^ 3
+270 PRINT "5 ^ 2 = "; 5 ^ 2
+280 PRINT "3 ^ 4 = "; 3 ^ 4
+290 PRINT "10 ^ 2 = "; 10 ^ 2
+300 PRINT ""
+310 PRINT "DONE"
+320 END
