@@ -26,7 +26,7 @@ This document tracks the implementation status of Dartmouth BASIC v4 features in
 - **Features**:
   - Reads numeric/string values from DATA statements
   - Supports numeric arrays (1D, 2D, 3D)
-  - Supports string variables (not string arrays)
+  - Supports string variables and string arrays
   - RESTORE resets data pointer to beginning
   - Maintains position across multiple READ statements
   - Skips REM comments when searching for DATA
@@ -37,6 +37,51 @@ This document tracks the implementation status of Dartmouth BASIC v4 features in
   - test-data-restore.bas ✅ (RESTORE functionality)
   - test-data-string.bas ✅ (string variables)
   - test-data-debug.bas ✅ (single value)
+  - test-stringarray-read.bas ✅ (string arrays)
+
+### ✅ Numeric Arrays
+- **Status**: ✅ Fully implemented and tested
+- **Spec Compliance**: Dartmouth v4 mandates 1D and 2D arrays only (per EBNF)
+- **Extensions**: 3D arrays added as uBasic-Plus extension
+- **Syntax**: 
+  - `DIM var(size)` - 1D array (spec)
+  - `DIM var(rows, cols)` - 2D array (spec)
+  - `DIM var(d1, d2, d3)` - 3D array (extension)
+- **Features**:
+  - Dynamic allocation from variable heap
+  - Full integration with DIM, LET, READ, and expressions
+  - Arrays are 0-indexed
+- **Tests**:
+  - test-array.bas ✅ (1D array basic operations)
+  - test-array-2d-let.bas ✅ (2D array with LET - spec)
+  - test-array-2d-read.bas ✅ (2D array with READ/DATA - spec)
+  - test-array-3d-let.bas ✅ (3D array with LET - extension)
+  - test-array-3d-read.bas ✅ (3D array with READ/DATA - extension)
+
+### ✅ String Arrays
+- **Status**: ✅ Fully implemented and tested
+- **Spec Compliance**: Dartmouth v4 mandates 1D and 2D string arrays only (per EBNF)
+- **Extensions**: 3D string arrays added as uBasic-Plus extension
+- **History**: String arrays introduced in Dartmouth BASIC v3/v4 (not in original v1)
+- **Syntax**:
+  - `DIM string_var(size)` - 1D array (spec)
+  - `DIM string_var(rows, cols)` - 2D array (spec)
+  - `DIM string_var(d1, d2, d3)` - 3D array (extension)
+- **Features**:
+  - Dynamic allocation from variable heap
+  - String pool management with garbage collection
+  - Full integration with DIM, LET, READ, and expressions
+- **Implementation**:
+  - New type `VARTYPE_STRING_ARRAY = 3`
+  - Structure `string_array_desc_t` stores dimensions and data offset
+  - Array data stores `uint16_t` offsets into string pool
+  - Modified `str_pool_compact()` to preserve array strings during GC
+- **Tests**:
+  - test-stringarray.bas ✅ (1D array with LET - spec)
+  - test-stringarray-read.bas ✅ (1D array with READ/DATA - spec)
+  - test-stringarray-2d.bas ✅ (2D array with LET - spec)
+  - test-stringarray-read-2d.bas ✅ (2D array with READ/DATA - spec)
+  - test-stringarray-read-3d.bas ✅ (3D array with READ/DATA - extension)
 
 ### ⚠️ CHANGE Statement
 - **Status**: Recognized but NOT IMPLEMENTED

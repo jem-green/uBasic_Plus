@@ -114,9 +114,10 @@ typedef struct for_state {
 /* string pool grows DOWN from string_state toward program */
 
 /* Variable types */
-#define VARTYPE_INTEGER  0
-#define VARTYPE_ARRAY    1
-#define VARTYPE_STRING   2
+#define VARTYPE_INTEGER      0
+#define VARTYPE_ARRAY        1
+#define VARTYPE_STRING       2
+#define VARTYPE_STRING_ARRAY 3
 
 #pragma pack(push, 1)
 /* Variable descriptor - allocated in heap on first use */
@@ -125,8 +126,9 @@ typedef struct {
   uint8_t type;           /* VARTYPE_* */
   union {
     VARIABLE_TYPE int_value;
-    uint16_t str_offset;  /* offset into string pool */
-    uint16_t arr_offset;  /* offset to array_desc_t */
+    uint16_t str_offset;      /* offset into string pool */
+    uint16_t arr_offset;      /* offset to array_desc_t */
+    uint16_t strarr_offset;   /* offset to string_array_desc_t */
   };
 } var_desc_t;
 
@@ -136,6 +138,13 @@ typedef struct {
   uint8_t dimensions;     /* 1, 2, or 3 */
   uint16_t dim_size[3];   /* dimension sizes */
 } array_desc_t;
+
+/* String array descriptor stored in heap */
+typedef struct {
+  uint16_t data_offset;   /* offset to array of string offsets (uint16_t[]) */
+  uint8_t dimensions;     /* 1, 2, or 3 */
+  uint16_t dim_size[3];   /* dimension sizes */
+} string_array_desc_t;
 
 /* Heap state - immediately after program */
 typedef struct {

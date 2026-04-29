@@ -149,6 +149,8 @@ static void  var_init(void);
 static char* sexpr(void);
 static VARIABLE_TYPE get_array_element(int varnum, uint16_t idx1, uint16_t idx2, uint16_t idx3);
 static void set_array_element(int varnum, uint16_t idx1, uint16_t idx2, uint16_t idx3, VARIABLE_TYPE value);
+static char* get_stringarray_element(int varnum, uint16_t idx1, uint16_t idx2, uint16_t idx3);
+static void set_stringarray_element(int varnum, uint16_t idx1, uint16_t idx2, uint16_t idx3, const char* value);
 static char* scpy(const char *);
 static char* sconcat(const char *, const char *);
 static char* sleft(const char *, int); 
@@ -278,8 +280,14 @@ static uint16_t str_pool_alloc(uint16_t size) {
     return 0;
   }
   
+  DEBUG_PRINTF("str_pool_alloc: Before: pool_base=%u, requesting %u bytes\n",
+               (unsigned)heap_state->str_pool_base, (unsigned)size);
+  
   new_pool_base = heap_state->str_pool_base - size;
   heap_state->str_pool_base = new_pool_base;
+  
+  DEBUG_PRINTF("str_pool_alloc: After: pool_base=%u, returning %u\n",
+               (unsigned)heap_state->str_pool_base, (unsigned)new_pool_base);
   
   return new_pool_base;
 }
@@ -486,9 +494,9 @@ static void accept(int token){
 // string additions
 /*---------------------------------------------------------------------------*/
 static void str_pool_compact(void) {
-  /* Compact string pool - repack all string variables */
+  /* Compact string pool - repack all string variables and string arrays */
   var_desc_t *vartab;
-  uint16_t i;
+  uint16_t i, j;
   uint16_t new_pool_base;
   uint16_t temp_offset = 0;
   
@@ -511,6 +519,27 @@ static void str_pool_compact(void) {
         memcpy(stringbuffer + temp_offset, str_data, len + 1);
         temp_offset += (uint16_t)(len + 1);
       }
+    } else if (vartab[i].type == VARTYPE_STRING_ARRAY && vartab[i].strarr_offset != 0) {
+      /* Handle string arrays - copy all non-null strings */
+      string_array_desc_t *arr_desc = (string_array_desc_t *)(mem_base + vartab[i].strarr_offset);
+      uint16_t *arr_data = (uint16_t *)(mem_base + arr_desc->data_offset);
+      uint16_t total_elements = arr_desc->dim_size[0] * arr_desc->dim_size[1] * arr_desc->dim_size[2];
+      
+      for (j = 0; j < total_elements; j++) {
+        if (arr_data[j] != 0) {
+          char *str_data = (char *)(mem_base + arr_data[j]);
+          size_t len = strlen(str_data);
+          
+          if (len > 0 && len <= MAX_STRINGVARLEN) {
+            if (temp_offset + len + 1 > MAX_BUFFERLEN) {
+              ended = 1;
+              return;
+            }
+            memcpy(stringbuffer + temp_offset, str_data, len + 1);
+            temp_offset += (uint16_t)(len + 1);
+          }
+        }
+      }
     }
   }
   
@@ -528,6 +557,27 @@ static void str_pool_compact(void) {
         temp_offset += (uint16_t)(len + 1);
       } else {
         vartab[i].str_offset = 0;
+      }
+    } else if (vartab[i].type == VARTYPE_STRING_ARRAY && vartab[i].strarr_offset != 0) {
+      /* Rebuild string array - reassign all string offsets */
+      string_array_desc_t *arr_desc = (string_array_desc_t *)(mem_base + vartab[i].strarr_offset);
+      uint16_t *arr_data = (uint16_t *)(mem_base + arr_desc->data_offset);
+      uint16_t total_elements = arr_desc->dim_size[0] * arr_desc->dim_size[1] * arr_desc->dim_size[2];
+      
+      for (j = 0; j < total_elements; j++) {
+        if (arr_data[j] != 0) {
+          char *src = stringbuffer + temp_offset;
+          size_t len = strlen(src);
+          
+          if (len > 0) {
+            new_pool_base -= (uint16_t)(len + 1);
+            memcpy(mem_base + new_pool_base, src, len + 1);
+            arr_data[j] = new_pool_base;
+            temp_offset += (uint16_t)(len + 1);
+          } else {
+            arr_data[j] = 0;
+          }
+        }
       }
     }
   }
@@ -755,9 +805,34 @@ static char* sfactor() { // string form of factor
 		    j = 0;
 		 r = schr(j);
 		 break;
-	default:	  
-		  r = get_stringvariable(tokenizer_variable_num());
-	      accept(TOKENIZER_STRINGVARIABLE);
+	default:
+	      {
+	        int var = tokenizer_variable_num();
+	        uint16_t idx1 = 0, idx2 = 0, idx3 = 0;
+	        accept(TOKENIZER_STRINGVARIABLE);
+	        
+	        /* Check for array indexing */
+	        if (tokenizer_token() == TOKENIZER_LEFTPAREN) {
+	          accept(TOKENIZER_LEFTPAREN);
+	          idx1 = (uint16_t)expr();
+	          
+	          if (tokenizer_token() == TOKENIZER_COMMA) {
+	            accept(TOKENIZER_COMMA);
+	            idx2 = (uint16_t)expr();
+	            
+	            if (tokenizer_token() == TOKENIZER_COMMA) {
+	              accept(TOKENIZER_COMMA);
+	              idx3 = (uint16_t)expr();
+	            }
+	          }
+	          
+	          accept(TOKENIZER_RIGHTPAREN);
+	          r = get_stringarray_element(var, idx1, idx2, idx3);
+	        } else {
+	          r = get_stringvariable(var);
+	        }
+	      }
+	      break;
 	}
    return r;
 }
@@ -1593,10 +1668,20 @@ static void read_statement(void){
       var = tokenizer_variable_num();
       accept(TOKENIZER_STRINGVARIABLE);
       
-      /* String arrays not supported in current implementation */
+      /* Check for string array indexing */
       if (tokenizer_token() == TOKENIZER_LEFTPAREN) {
-        DEBUG_PRINTF("read_statement: String arrays not supported\n");
-        exit(1);
+        is_array = 1;
+        accept(TOKENIZER_LEFTPAREN);
+        idx1 = (uint16_t)expr();
+        if (tokenizer_token() == TOKENIZER_COMMA) {
+          accept(TOKENIZER_COMMA);
+          idx2 = (uint16_t)expr();
+          if (tokenizer_token() == TOKENIZER_COMMA) {
+            accept(TOKENIZER_COMMA);
+            idx3 = (uint16_t)expr();
+          }
+        }
+        accept(TOKENIZER_RIGHTPAREN);
       }
     } else if (tokenizer_token() == TOKENIZER_VARIABLE) {
       var = tokenizer_variable_num();
@@ -1692,9 +1777,13 @@ static void read_statement(void){
         exit(1);
       }
       
-      /* Assign to string variable */
+      /* Assign to string variable or array */
       DEBUG_PRINTF("read_statement: Setting string var %d to '%s'\n", var, str_value);
-      set_stringvariable(var, str_value);
+      if (is_array) {
+        set_stringarray_element(var, idx1, idx2, idx3, str_value);
+      } else {
+        set_stringvariable(var, str_value);
+      }
     } else {
       /* Read numeric value */
       if (tokenizer_token() == TOKENIZER_NUMBER) {
@@ -1824,11 +1913,48 @@ static void let_statement(void){
 	 accept(TOKENIZER_LF);
   } else if (tokenizer_token() == TOKENIZER_STRINGVARIABLE) {
      var = tokenizer_variable_num();
-	 accept(TOKENIZER_STRINGVARIABLE);
+     accept(TOKENIZER_STRINGVARIABLE);
+     
+     /* Check for array indexing */
+     is_array = 0;
+     if (tokenizer_token() == TOKENIZER_LEFTPAREN) {
+       is_array = 1;
+       accept(TOKENIZER_LEFTPAREN);
+       idx1 = (uint16_t)expr();
+       
+       if (tokenizer_token() == TOKENIZER_COMMA) {
+         accept(TOKENIZER_COMMA);
+         idx2 = (uint16_t)expr();
+         
+         if (tokenizer_token() == TOKENIZER_COMMA) {
+           accept(TOKENIZER_COMMA);
+           idx3 = (uint16_t)expr();
+         }
+       }
+       
+       accept(TOKENIZER_RIGHTPAREN);
+     }
+     
      accept(TOKENIZER_EQ);
-	 set_stringvariable(var, sexpr());
-	 DEBUG_PRINTF("let_statement: string assign '%s' to %d\n", get_stringvariable(var), var);
-	 accept(TOKENIZER_LF);
+     
+     if (is_array) {
+       set_stringarray_element(var, idx1, idx2, idx3, sexpr());
+     } else {
+       set_stringvariable(var, sexpr());
+     }
+     
+     #if VERBOSE
+       if (is_array) {
+         DEBUG_PRINTF("let_statement: assign to string array %c$(%u", 'a'+var, (unsigned)idx1);
+         if (idx2 > 0) DEBUG_PRINTF(",%u", (unsigned)idx2);
+         if (idx3 > 0) DEBUG_PRINTF(",%u", (unsigned)idx3);
+         DEBUG_PRINTF(")\n");
+       } else {
+         DEBUG_PRINTF("let_statement: string assign '%s' to %d\n", get_stringvariable(var), var);
+       }
+     #endif
+     
+     accept(TOKENIZER_LF);
 
   }
   // end of string additions
@@ -1983,20 +2109,30 @@ static void dim_statement(void) {
   uint16_t data_bytes;
   uint16_t desc_offset, data_offset;
   array_desc_t *arr_desc;
+  string_array_desc_t *strarr_desc;
   VARIABLE_TYPE *arr_data;
+  uint16_t *strarr_data;
   uint16_t i;
+  int is_string = 0;
   
   accept(TOKENIZER_DIM);
   
-  if (tokenizer_token() != TOKENIZER_VARIABLE) {
+  /* Check if string or numeric variable */
+  if (tokenizer_token() == TOKENIZER_STRINGVARIABLE) {
+    is_string = 1;
+    var = tokenizer_variable_num();
+    varname = 'a' + (char)var;
+    accept(TOKENIZER_STRINGVARIABLE);
+  } else if (tokenizer_token() == TOKENIZER_VARIABLE) {
+    var = tokenizer_variable_num();
+    varname = 'a' + (char)var;
+    accept(TOKENIZER_VARIABLE);
+  } else {
     DEBUG_PRINTF("dim_statement: Expected variable name.\n");
     ended = 1;
     return;
   }
   
-  var = tokenizer_variable_num();
-  varname = 'a' + (char)var;
-  accept(TOKENIZER_VARIABLE);
   accept(TOKENIZER_LEFTPAREN);
   
   /* Parse dimensions */
@@ -2024,59 +2160,118 @@ static void dim_statement(void) {
   
   /* Calculate total size */
   total_elements = dim1 * dim2 * dim3;
-  data_bytes = total_elements * sizeof(VARIABLE_TYPE);
   
-  #if VERBOSE
-    DEBUG_PRINTF("dim_statement: DIM %c(%u", varname, (unsigned)dim1);
-    if (dim2 > 1) DEBUG_PRINTF(",%u", (unsigned)dim2);
-    if (dim3 > 1) DEBUG_PRINTF(",%u", (unsigned)dim3);
-    DEBUG_PRINTF(") = %u elements, %u bytes\n", 
-                 (unsigned)total_elements, (unsigned)data_bytes);
-  #endif
-  
-  /* Create array variable */
-  v = find_or_create_variable(varname, VARTYPE_ARRAY);
-  if (v == NULL) {
-    DEBUG_PRINTF("dim_statement: Failed to create variable.\n");
-    ended = 1;
-    return;
+  if (is_string) {
+    /* String array - stores offsets (uint16_t) */
+    data_bytes = total_elements * sizeof(uint16_t);
+    
+    #if VERBOSE
+      DEBUG_PRINTF("dim_statement: DIM %c$(%u", varname, (unsigned)dim1);
+      if (dim2 > 1) DEBUG_PRINTF(",%u", (unsigned)dim2);
+      if (dim3 > 1) DEBUG_PRINTF(",%u", (unsigned)dim3);
+      DEBUG_PRINTF(") = %u elements, %u bytes\n", 
+                   (unsigned)total_elements, (unsigned)data_bytes);
+    #endif
+    
+    /* Create string array variable */
+    v = find_or_create_variable(varname, VARTYPE_STRING_ARRAY);
+    if (v == NULL) {
+      DEBUG_PRINTF("dim_statement: Failed to create string array variable.\n");
+      ended = 1;
+      return;
+    }
+    
+    /* Allocate string array descriptor */
+    desc_offset = heap_alloc(sizeof(string_array_desc_t));
+    if (desc_offset == 0) {
+      DEBUG_PRINTF("dim_statement: Out of memory for string array descriptor.\n");
+      ended = 1;
+      return;
+    }
+    v->strarr_offset = desc_offset;
+    
+    /* Allocate array data (offsets) */
+    data_offset = heap_alloc(data_bytes);
+    if (data_offset == 0) {
+      DEBUG_PRINTF("dim_statement: Out of memory for string array data.\n");
+      ended = 1;
+      return;
+    }
+    
+    /* Initialize string array descriptor */
+    strarr_desc = (string_array_desc_t *)(mem_base + desc_offset);
+    strarr_desc->data_offset = data_offset;
+    strarr_desc->dimensions = (dim2 > 1) ? ((dim3 > 1) ? 3 : 2) : 1;
+    strarr_desc->dim_size[0] = dim1;
+    strarr_desc->dim_size[1] = dim2;
+    strarr_desc->dim_size[2] = dim3;
+    
+    /* Initialize array data to zero (null string offsets) */
+    strarr_data = (uint16_t *)(mem_base + data_offset);
+    for (i = 0; i < total_elements; i++) {
+      strarr_data[i] = 0;
+    }
+    
+    #if VERBOSE
+      DEBUG_PRINTF("dim_statement: String array descriptor at %u, data at %u\n",
+                   (unsigned)desc_offset, (unsigned)data_offset);
+    #endif
+  } else {
+    /* Numeric array - stores values */
+    data_bytes = total_elements * sizeof(VARIABLE_TYPE);
+    
+    #if VERBOSE
+      DEBUG_PRINTF("dim_statement: DIM %c(%u", varname, (unsigned)dim1);
+      if (dim2 > 1) DEBUG_PRINTF(",%u", (unsigned)dim2);
+      if (dim3 > 1) DEBUG_PRINTF(",%u", (unsigned)dim3);
+      DEBUG_PRINTF(") = %u elements, %u bytes\n", 
+                   (unsigned)total_elements, (unsigned)data_bytes);
+    #endif
+    
+    /* Create array variable */
+    v = find_or_create_variable(varname, VARTYPE_ARRAY);
+    if (v == NULL) {
+      DEBUG_PRINTF("dim_statement: Failed to create variable.\n");
+      ended = 1;
+      return;
+    }
+    
+    /* Allocate array descriptor */
+    desc_offset = heap_alloc(sizeof(array_desc_t));
+    if (desc_offset == 0) {
+      DEBUG_PRINTF("dim_statement: Out of memory for array descriptor.\n");
+      ended = 1;
+      return;
+    }
+    v->arr_offset = desc_offset;
+    
+    /* Allocate array data */
+    data_offset = heap_alloc(data_bytes);
+    if (data_offset == 0) {
+      DEBUG_PRINTF("dim_statement: Out of memory for array data.\n");
+      ended = 1;
+      return;
+    }
+    
+    /* Initialize array descriptor */
+    arr_desc = (array_desc_t *)(mem_base + desc_offset);
+    arr_desc->data_offset = data_offset;
+    arr_desc->dimensions = (dim2 > 1) ? ((dim3 > 1) ? 3 : 2) : 1;
+    arr_desc->dim_size[0] = dim1;
+    arr_desc->dim_size[1] = dim2;
+    arr_desc->dim_size[2] = dim3;
+    
+    /* Initialize array data to zero */
+    arr_data = (VARIABLE_TYPE *)(mem_base + data_offset);
+    for (i = 0; i < total_elements; i++) {
+      arr_data[i] = 0;
+    }
+    
+    #if VERBOSE
+      DEBUG_PRINTF("dim_statement: Array descriptor at %u, data at %u\n",
+                   (unsigned)desc_offset, (unsigned)data_offset);
+    #endif
   }
-  
-  /* Allocate array descriptor */
-  desc_offset = heap_alloc(sizeof(array_desc_t));
-  if (desc_offset == 0) {
-    DEBUG_PRINTF("dim_statement: Out of memory for array descriptor.\n");
-    ended = 1;
-    return;
-  }
-  v->arr_offset = desc_offset;
-  
-  /* Allocate array data */
-  data_offset = heap_alloc(data_bytes);
-  if (data_offset == 0) {
-    DEBUG_PRINTF("dim_statement: Out of memory for array data.\n");
-    ended = 1;
-    return;
-  }
-  
-  /* Initialize array descriptor */
-  arr_desc = (array_desc_t *)(mem_base + desc_offset);
-  arr_desc->data_offset = data_offset;
-  arr_desc->dimensions = (dim2 > 1) ? ((dim3 > 1) ? 3 : 2) : 1;
-  arr_desc->dim_size[0] = dim1;
-  arr_desc->dim_size[1] = dim2;
-  arr_desc->dim_size[2] = dim3;
-  
-  /* Initialize array data to zero */
-  arr_data = (VARIABLE_TYPE *)(mem_base + data_offset);
-  for (i = 0; i < total_elements; i++) {
-    arr_data[i] = 0;
-  }
-  
-  #if VERBOSE
-    DEBUG_PRINTF("dim_statement: Array descriptor at %u, data at %u\n",
-                 (unsigned)desc_offset, (unsigned)data_offset);
-  #endif
 }
 /*---------------------------------------------------------------------------*/
 static void statement(void){
@@ -2348,6 +2543,152 @@ static void set_array_element(int varnum, uint16_t idx1, uint16_t idx2, uint16_t
     if (arr_desc->dimensions >= 2) DEBUG_PRINTF(",%u", (unsigned)idx2);
     if (arr_desc->dimensions >= 3) DEBUG_PRINTF(",%u", (unsigned)idx3);
     DEBUG_PRINTF(") = %d\n", (int)value);
+  #endif
+}
+/*---------------------------------------------------------------------------*/
+static char* get_stringarray_element(int varnum, uint16_t idx1, uint16_t idx2, uint16_t idx3) {
+  char varname = 'a' + (char)varnum;
+  var_desc_t *v;
+  string_array_desc_t *arr_desc;
+  uint16_t *arr_data;
+  uint16_t offset, str_offset;
+  
+  if (varnum < 0 || varnum >= 26 || mem_base == NULL) {
+    return scpy(nullstring);
+  }
+  
+  v = find_variable(varname);
+  if (v == NULL || v->type != VARTYPE_STRING_ARRAY) {
+    DEBUG_PRINTF("get_stringarray_element: Variable %c$ is not a string array\n", varname);
+    return scpy(nullstring);
+  }
+  
+  arr_desc = (string_array_desc_t *)(mem_base + v->strarr_offset);
+  
+  /* Validate indices */
+  if (idx1 >= arr_desc->dim_size[0]) {
+    DEBUG_PRINTF("get_stringarray_element: Index 1 (%u) out of bounds (max %u)\n", 
+                 (unsigned)idx1, (unsigned)arr_desc->dim_size[0]);
+    return scpy(nullstring);
+  }
+  if (arr_desc->dimensions >= 2 && idx2 >= arr_desc->dim_size[1]) {
+    DEBUG_PRINTF("get_stringarray_element: Index 2 (%u) out of bounds (max %u)\n", 
+                 (unsigned)idx2, (unsigned)arr_desc->dim_size[1]);
+    return scpy(nullstring);
+  }
+  if (arr_desc->dimensions >= 3 && idx3 >= arr_desc->dim_size[2]) {
+    DEBUG_PRINTF("get_stringarray_element: Index 3 (%u) out of bounds (max %u)\n", 
+                 (unsigned)idx3, (unsigned)arr_desc->dim_size[2]);
+    return scpy(nullstring);
+  }
+  
+  /* Calculate linear offset */
+  if (arr_desc->dimensions == 1) {
+    offset = idx1;
+  } else if (arr_desc->dimensions == 2) {
+    offset = idx1 * arr_desc->dim_size[1] + idx2;
+  } else {
+    offset = (idx1 * arr_desc->dim_size[1] + idx2) * arr_desc->dim_size[2] + idx3;
+  }
+  
+  /* Array data contains offsets to strings in string pool */
+  arr_data = (uint16_t *)(mem_base + arr_desc->data_offset);
+  str_offset = arr_data[offset];
+  
+  #if VERBOSE
+    DEBUG_PRINTF("get_stringarray_element: %c$(%u", varname, (unsigned)idx1);
+    if (arr_desc->dimensions >= 2) DEBUG_PRINTF(",%u", (unsigned)idx2);
+    if (arr_desc->dimensions >= 3) DEBUG_PRINTF(",%u", (unsigned)idx3);
+    DEBUG_PRINTF(") offset=%u str_offset=%u\n", (unsigned)offset, (unsigned)str_offset);
+  #endif
+  
+  if (str_offset == 0) {
+    return scpy(nullstring);
+  }
+  
+  return scpy((char *)(mem_base + str_offset));
+}
+/*---------------------------------------------------------------------------*/
+static void set_stringarray_element(int varnum, uint16_t idx1, uint16_t idx2, uint16_t idx3, const char* value) {
+  char varname = 'a' + (char)varnum;
+  var_desc_t *v;
+  string_array_desc_t *arr_desc;
+  uint16_t *arr_data;
+  uint16_t offset, str_offset;
+  size_t len;
+  
+  if (varnum < 0 || varnum >= 26 || mem_base == NULL || value == NULL) {
+    return;
+  }
+  
+  v = find_variable(varname);
+  if (v == NULL || v->type != VARTYPE_STRING_ARRAY) {
+    DEBUG_PRINTF("set_stringarray_element: Variable %c$ is not a string array\n", varname);
+    ended = 1;
+    return;
+  }
+  
+  arr_desc = (string_array_desc_t *)(mem_base + v->strarr_offset);
+  
+  /* Validate indices */
+  if (idx1 >= arr_desc->dim_size[0]) {
+    DEBUG_PRINTF("set_stringarray_element: Index 1 (%u) out of bounds (max %u)\n", 
+                 (unsigned)idx1, (unsigned)arr_desc->dim_size[0]);
+    ended = 1;
+    return;
+  }
+  if (arr_desc->dimensions >= 2 && idx2 >= arr_desc->dim_size[1]) {
+    DEBUG_PRINTF("set_stringarray_element: Index 2 (%u) out of bounds (max %u)\n", 
+                 (unsigned)idx2, (unsigned)arr_desc->dim_size[1]);
+    ended = 1;
+    return;
+  }
+  if (arr_desc->dimensions >= 3 && idx3 >= arr_desc->dim_size[2]) {
+    DEBUG_PRINTF("set_stringarray_element: Index 3 (%u) out of bounds (max %u)\n", 
+                 (unsigned)idx3, (unsigned)arr_desc->dim_size[2]);
+    ended = 1;
+    return;
+  }
+  
+  /* Calculate linear offset */
+  if (arr_desc->dimensions == 1) {
+    offset = idx1;
+  } else if (arr_desc->dimensions == 2) {
+    offset = idx1 * arr_desc->dim_size[1] + idx2;
+  } else {
+    offset = (idx1 * arr_desc->dim_size[1] + idx2) * arr_desc->dim_size[2] + idx3;
+  }
+  
+  /* Allocate string in string pool */
+  len = strlen(value);
+  if (len > MAX_STRINGVARLEN) {
+    len = MAX_STRINGVARLEN;
+  }
+  
+  if (len == 0) {
+    str_offset = 0;
+  } else {
+    str_offset = str_pool_alloc((uint16_t)(len + 1));
+    DEBUG_PRINTF("set_stringarray_element: Allocated %u bytes at offset %u for '%s'\n",
+                 (unsigned)(len + 1), (unsigned)str_offset, value);
+    if (str_offset == 0) {
+      DEBUG_PRINTF("set_stringarray_element: Out of string pool memory\n");
+      ended = 1;
+      return;
+    }
+    memcpy(mem_base + str_offset, value, len);
+    mem_base[str_offset + len] = '\0';
+  }
+  
+  /* Store string offset in array */
+  arr_data = (uint16_t *)(mem_base + arr_desc->data_offset);
+  arr_data[offset] = str_offset;
+  
+  #if VERBOSE
+    DEBUG_PRINTF("set_stringarray_element: %c$(%u", varname, (unsigned)idx1);
+    if (arr_desc->dimensions >= 2) DEBUG_PRINTF(",%u", (unsigned)idx2);
+    if (arr_desc->dimensions >= 3) DEBUG_PRINTF(",%u", (unsigned)idx3);
+    DEBUG_PRINTF(") = '%s'\n", value);
   #endif
 }
 /*---------------------------------------------------------------------------*/
