@@ -61,6 +61,7 @@ static VARIABLE_TYPE expr(void);
 static void line_statement(void);
 static void statement(void);
 static void data_statement(void);
+static void def_statement(void);
 static void restore_statement(void);
 static void read_statement(void);
 static void index_free(void);
@@ -68,8 +69,8 @@ static void reset_control_state(void);
 static VARIABLE_TYPE expr(void);
 void set_variable(int varum, VARIABLE_TYPE value);
 VARIABLE_TYPE get_variable(int varnum);
-static void gosub_push(int32_t line_num);
-static int32_t gosub_pop(void);
+static void gosub_push(uint32_t line_num);
+static uint32_t gosub_pop(void);
 static void for_push(for_state state);
 static for_state for_pop(void);
 
@@ -85,9 +86,12 @@ static int32_t *for_depth_cell = NULL;
 static int32_t *data_ptr_cell = NULL;
 static int32_t *gosub_stack_mem = NULL;
 static for_state *for_stack = NULL;
+static VARIABLE_TYPE *variables_mem = NULL;
 static heap_state_t *heap_state = NULL;
 
-
+/* DEF FN function table - max 26 functions (a-z) */
+#define MAX_FN_DEFS 26
+static fn_def_t fn_table[MAX_FN_DEFS];
 
 // string additions
 #define MAX_STRINGVARLEN UBASIC_STRING_VAR_MAXLEN
@@ -101,7 +105,7 @@ static int freebufptr = 0;
 // end of string additions
 
 struct line_index {
-  int line_number;
+  uint32_t line_number;
   char const *program_text_position;
   struct line_index *next;
 };
@@ -160,7 +164,7 @@ static char* sstr(int);
 static char* schr(int);
 static int sinstr(int, const char*, const char*);
 static void str_pool_compact(void);
-static var_desc_t *find_variable(char name);
+static var_desc_t *find_variable(char name, uint8_t type);
 static var_desc_t *find_or_create_variable(char name, uint8_t type);
 static uint16_t str_pool_alloc(uint16_t size);
 // end of string additions
@@ -179,65 +183,92 @@ static var_desc_t *get_var_table(void) {
   return (var_desc_t *)((uint8_t *)heap_state + sizeof(heap_state_t));
 }
 
-static var_desc_t *find_variable(char name) {
+static var_desc_t *find_variable(char name, uint8_t type) {
   var_desc_t *vartab;
   uint16_t i;
   
   if (heap_state == NULL) return NULL;
   vartab = get_var_table();
   
+  #if DEBUG
+    DEBUG_PRINTF("find_variable: Looking for '%c' type %d, var_count=%u\n", name, type, (unsigned)heap_state->var_count);
+  #endif
+  
+  fflush(stderr);  /* Force output before loop */
   for (i = 0; i < heap_state->var_count; i++) {
-    if (vartab[i].name == name) {
+    DEBUG_PRINTF("find_variable: Loop start, i=%u\n", (unsigned)i);
+    fflush(stderr);
+    #if DEBUG
+      DEBUG_PRINTF("find_variable: Checking var[%u] name='%c' type=%d (expected '%c' type=%d)\n", 
+                   (unsigned)i, vartab[i].name, vartab[i].type, name, type);
+    #endif
+    fflush(stderr);
+    if (vartab[i].name == name && vartab[i].type == type) {
+      #if DEBUG
+        DEBUG_PRINTF("find_variable: Found '%c' type %d at index %u\n", name, type, (unsigned)i);
+      #endif
       return &vartab[i];
     }
+    DEBUG_PRINTF("find_variable: Loop end, i=%u\n", (unsigned)i);
+    fflush(stderr);
   }
+  #if DEBUG
+    DEBUG_PRINTF("find_variable: '%c' type %d not found\n", name, type);
+  #endif
   return NULL;
 }
 
 static var_desc_t *create_variable(char name, uint8_t type) {
   var_desc_t *vartab;
   var_desc_t *newvar;
-  uint16_t new_heap_top;
+  uint16_t var_table_end;
   
   if (heap_state == NULL) {
     DEBUG_PRINTF("create_variable: heap_state is NULL\n");
     return NULL;
   }
   
-  /* Check if heap and string pool would collide */
-  new_heap_top = heap_state->var_heap_top + sizeof(var_desc_t);
-  if (new_heap_top >= heap_state->str_pool_base) {
+  vartab = get_var_table();
+  
+  /* Variables are stored contiguously starting after heap_state */
+  /* Calculate where the variable table ends (NOT var_heap_top!) */
+  var_table_end = (uint16_t)((uint8_t*)heap_state - mem_base) + sizeof(heap_state_t) + 
+                  ((heap_state->var_count + 1) * sizeof(var_desc_t));
+  
+  /* Check if adding this variable would collide with string pool */
+  if (var_table_end >= heap_state->str_pool_base) {
     DEBUG_PRINTF("create_variable: Out of memory (heap collision)\n");
     ended = 1;
     return NULL;
   }
   
-  vartab = get_var_table();
-  newvar = (var_desc_t *)(mem_base + heap_state->var_heap_top);
+  /* Also check if it would collide with heap allocations */
+  if (var_table_end > heap_state->var_heap_top) {
+    /* Variable table is growing into allocated space, update var_heap_top */
+    heap_state->var_heap_top = var_table_end;
+  }
+  
+  /* New variable goes at the end of the variable table */
+  newvar = &vartab[heap_state->var_count];
   
   newvar->name = name;
   newvar->type = type;
   newvar->int_value = 0;  /* Initialize to zero */
   
-  heap_state->var_heap_top = new_heap_top;
   heap_state->var_count++;
   
   #if VERBOSE
-    DEBUG_PRINTF("create_variable: Created '%c' type %d at offset %u\n",
-                 name, type, (unsigned)(heap_state->var_heap_top - sizeof(var_desc_t)));
+    DEBUG_PRINTF("create_variable: Created '%c' type %d at index %u (offset %u)\n",
+                 name, type, (unsigned)(heap_state->var_count - 1),
+                 (unsigned)((uint8_t*)newvar - mem_base));
   #endif
   
   return newvar;
 }
 
 static var_desc_t *find_or_create_variable(char name, uint8_t type) {
-  var_desc_t *v = find_variable(name);
+  var_desc_t *v = find_variable(name, type);
   if (v != NULL) {
-    /* Variable exists - verify type matches */
-    if (v->type != type) {
-      DEBUG_PRINTF("find_or_create_variable: Type mismatch for '%c'\n", name);
-      return NULL;
-    }
     return v;
   }
   /* Create new variable */
@@ -316,6 +347,11 @@ void ubasic_init(uint8_t *memory, uint32_t memory_bytes) {
   heap_state->str_pool_base = (uint16_t)memory_bytes;
   heap_state->var_count = 0;
   
+  /* Initialize DEF FN table */
+  for (int i = 0; i < MAX_FN_DEFS; i++) {
+    fn_table[i].defined = 0;
+  }
+  
   program_ptr = (char const *)(memory + UBASIC_MEM_PROGRAM_OFFSET);
   memory[UBASIC_MEM_PROGRAM_OFFSET] = '\0';
   *data_ptr_cell = 0;  /* Initialize DATA pointer to start of program */
@@ -342,7 +378,9 @@ void ubasic_init_peek_poke(uint8_t *memory, uint32_t memory_bytes,peek_func peek
 /*---------------------------------------------------------------------------*/
 static void reset_control_state(void) {
   index_free();
-  tokenizer_reset();
+  if (program_ptr != NULL) {
+    tokenizer_reset();
+  }
   if (resume_offset_cell != NULL) {
     *resume_offset_cell = 0;
   }
@@ -1014,6 +1052,87 @@ static int factor(void) {
     r = (int)(log((double)expr()) * 1000);
     accept(TOKENIZER_RIGHTPAREN);
     break;
+  case TOKENIZER_FN:
+    /* User-defined function */
+    {
+      char func_letter;
+      int func_index;
+      int arg_value;
+      int saved_param_value;
+      int var_num;
+      const char *saved_pos;
+      const char *fn_expr_start, *fn_expr_end;
+      
+      accept(TOKENIZER_FN);
+      
+      /* Get function letter */
+      if (tokenizer_token() != TOKENIZER_VARIABLE) {
+        DEBUG_PRINTF("factor: Expected function letter after FN.\n");
+        ended = 1;
+        r = 0;
+        break;
+      }
+      
+      /* Variable numbering: 0-25 = a-z, 26-51 = A-Z */
+      var_num = tokenizer_variable_num();
+      if (var_num >= 26) {
+        func_letter = (char)('A' + (var_num - 26));  /* A-Z */
+      } else {
+        func_letter = (char)('A' + var_num);  /* a-z => A-Z */
+      }
+      
+      accept(TOKENIZER_VARIABLE);
+      
+      /* Check function is defined */
+      func_index = func_letter - 'A';
+      if (func_index < 0 || func_index >= MAX_FN_DEFS || !fn_table[func_index].defined) {
+        DEBUG_PRINTF("factor: FN%c is not defined.\n", func_letter);
+        ended = 1;
+        r = 0;
+        break;
+      }
+      
+      accept(TOKENIZER_LEFTPAREN);
+      
+      /* Evaluate argument */
+      arg_value = expr();
+      
+      accept(TOKENIZER_RIGHTPAREN);
+      
+      /* Save current parameter variable value */
+      saved_param_value = get_variable(fn_table[func_index].param_var);
+      
+      /* Set parameter to argument value */
+      set_variable(fn_table[func_index].param_var, arg_value);
+      
+      #if DEBUG
+        DEBUG_PRINTF("factor: Set param var %d to %d (was %d)\n",
+                     fn_table[func_index].param_var, arg_value, saved_param_value);
+      #endif
+      
+      /* Save current tokenizer position */
+      saved_pos = tokenizer_pos();
+      
+      /* Jump to function expression */
+      fn_expr_start = program_ptr + fn_table[func_index].expr_start;
+      fn_expr_end = program_ptr + fn_table[func_index].expr_end;
+      
+      tokenizer_goto(fn_expr_start);
+      
+      /* Evaluate function expression */
+      r = expr();
+      
+      /* Restore parameter variable */
+      set_variable(fn_table[func_index].param_var, saved_param_value);
+      
+      /* Restore tokenizer position */
+      tokenizer_goto(saved_pos);
+      
+      #if DEBUG
+        DEBUG_PRINTF("factor: FN%c(%d) = %d\n", func_letter, arg_value, r);
+      #endif
+    }
+    break;
  // end of math functions
 	 
   case TOKENIZER_NUMBER:
@@ -1161,7 +1280,7 @@ static void index_free(void) {
   if(line_index_head != NULL) {
     line_index_current = line_index_head;
     do {
-      DEBUG_PRINTF("index_free: Freeing index for line %d.\n", line_index_current->line_number);
+      DEBUG_PRINTF("index_free: Freeing index for line %u.\n", line_index_current->line_number);
       line_index_head = line_index_current;
       line_index_current = line_index_current->next;
       free(line_index_head);
@@ -1170,7 +1289,7 @@ static void index_free(void) {
   }
 }
 /*---------------------------------------------------------------------------*/
-static char const* index_find(int linenum) {
+static char const* index_find(uint32_t linenum) {
   struct line_index *lidx;
   lidx = line_index_head;
 
@@ -1184,10 +1303,10 @@ static char const* index_find(int linenum) {
     #if DEBUG
     	#if VERBOSE
       		if(lidx != NULL) {
-        		DEBUG_PRINTF("index_find: Step %3d. Found index for line %d: %lld.\n",
+        		DEBUG_PRINTF("index_find: Step %3d. Found index for line %u: %td.\n",
         		step,
         		lidx->line_number,
-        		(long long)(lidx->program_text_position - tokenizer_start()));
+        		lidx->program_text_position - tokenizer_start());
       		}
       		step++;
     	#endif
@@ -1196,7 +1315,7 @@ static char const* index_find(int linenum) {
   if(lidx != NULL && lidx->line_number == linenum) {
     #if DEBUG
     	#if VERBOSE
-      		DEBUG_PRINTF("index_find: Returning index for line %d.\n", linenum);
+      		DEBUG_PRINTF("index_find: Returning index for line %u.\n", linenum);
     	#endif
     #endif
     return lidx->program_text_position;
@@ -1205,7 +1324,7 @@ static char const* index_find(int linenum) {
   return NULL;
 }
 /*---------------------------------------------------------------------------*/
-static void index_add(int linenum, char const* sourcepos) {
+static void index_add(uint32_t linenum, char const* sourcepos) {
   if(line_index_head != NULL && index_find(linenum)) {
     return;
   }
@@ -1226,48 +1345,50 @@ static void index_add(int linenum, char const* sourcepos) {
   }
   #if DEBUG
   	#if VERBOSE
-		DEBUG_PRINTF("index_add: Adding index for line %d: %lld.\n", linenum,
-			(long long)(sourcepos - tokenizer_start()));
+		DEBUG_PRINTF("index_add: Adding index for line %u: %td.\n", linenum,
+			sourcepos - tokenizer_start());
 		#endif
 	#endif
 }
 /*---------------------------------------------------------------------------*/
-static void jump_linenum_slow(int linenum) {
+static void jump_linenum_slow(uint32_t linenum) {
+  DEBUG_PRINTF("jump_linenum_slow: Looking for line %u.\n", linenum);
   tokenizer_init(program_ptr);
-  while(tokenizer_num() != linenum) {
+  while(tokenizer_linenum() != linenum) {
     do {
-      do {
-        tokenizer_next();
-      } while(tokenizer_token() != TOKENIZER_LF &&
-          tokenizer_token() != TOKENIZER_ENDOFINPUT);
-      if(tokenizer_token() == TOKENIZER_LF) {
-        tokenizer_next();
-      }
-    } while(tokenizer_token() != TOKENIZER_NUMBER);
+      tokenizer_skip();
+    } while(tokenizer_token() != TOKENIZER_NUMBER &&
+            tokenizer_token() != TOKENIZER_ENDOFINPUT);
 	#if DEBUG
       #if VERBOSE
-        DEBUG_PRINTF("jump_linenum_slow: Found line %d.\n", tokenizer_num());
+        DEBUG_PRINTF("jump_linenum_slow: Found line %u.\n", tokenizer_linenum());
 	  #endif
 	#endif
+    if(tokenizer_token() == TOKENIZER_ENDOFINPUT) {
+      DEBUG_PRINTF("jump_linenum_slow: Line %u not found!\n", linenum);
+      ended = 1;
+      return;
+    }
   }
+  DEBUG_PRINTF("jump_linenum_slow: Successfully jumped to line %u.\n", linenum);
 }
 /*---------------------------------------------------------------------------*/
-static void jump_linenum(int linenum) {
+static void jump_linenum(uint32_t linenum) {
   char const* pos = index_find(linenum);
   if(pos != NULL) {
-    DEBUG_PRINTF("jump_linenum: Going to line %d.\n", linenum);
+    DEBUG_PRINTF("jump_linenum: Going to line %u.\n", linenum);
     tokenizer_goto(pos);
   } else {
     /* We'll try to find a yet-unindexed line to jump to. */
-    DEBUG_PRINTF("jump_linenum: Calling jump_linenum_slow for line %d.\n", linenum);
+    DEBUG_PRINTF("jump_linenum: Calling jump_linenum_slow for line %u.\n", linenum);
     jump_linenum_slow(linenum);
   }
 }
 /*---------------------------------------------------------------------------*/
 static void goto_statement(void) {
   accept(TOKENIZER_GOTO);
-  DEBUG_PRINTF("jump_linenum: goto.\n");
-  jump_linenum(tokenizer_num());
+  DEBUG_PRINTF("goto_statement: goto.\n");
+  jump_linenum(tokenizer_linenum());
 }
 /*---------------------------------------------------------------------------*/
 static void on_statement(void) {
@@ -1296,7 +1417,7 @@ static void on_statement(void) {
   
   /* Parse comma-separated list of line numbers */
   while (count < 20 && tokenizer_token() == TOKENIZER_NUMBER) {
-    line_numbers[count] = tokenizer_num();
+    line_numbers[count] = tokenizer_linenum();
     count++;
     accept(TOKENIZER_NUMBER);
     
@@ -1311,12 +1432,12 @@ static void on_statement(void) {
   
   /* Execute if index is in valid range (1-based) */
   if (index >= 1 && index <= count) {
-    int target_line = line_numbers[index - 1];
+    uint32_t target_line = line_numbers[index - 1];
     
     if (is_gosub) {
       /* GOSUB: push return address and jump */
       if (*gosub_depth_cell < UBASIC_MAX_GOSUB_STACK_DEPTH) {
-        gosub_push(tokenizer_num());
+        gosub_push(tokenizer_linenum());
         jump_linenum(target_line);
       } else {
         DEBUG_PRINTF("on_statement: gosub stack exhausted.\n");
@@ -1634,6 +1755,110 @@ static void restore_statement(void){
   DEBUG_PRINTF("restore_statement: DATA pointer reset to start.\n");
 }
 /*---------------------------------------------------------------------------*/
+static void def_statement(void){
+  /* DEF FN statement - define a user function
+   * Syntax: DEF FN letter(variable) = expression
+   */
+  char func_letter;
+  int param_var;
+  int fn_var_num;
+  const char *expr_start_ptr, *expr_end_ptr;
+  uint16_t expr_start_offset, expr_end_offset;
+  int func_index;
+  
+  accept(TOKENIZER_DEF);
+  accept(TOKENIZER_FN);
+  
+  /* Get function letter (A-Z) - tokenizer sees it as a variable */
+  #if DEBUG
+    DEBUG_PRINTF("def_statement: Next token is '%s'\n", tokenizer_token_name(tokenizer_token()));
+  #endif
+  
+  if (tokenizer_token() != TOKENIZER_VARIABLE) {
+    DEBUG_PRINTF("def_statement: Expected function letter after FN.\n");
+    ended = 1;
+    return;
+  }
+  
+  /* Variable numbering: 0-25 = a-z, 26-51 = A-Z */
+  fn_var_num = tokenizer_variable_num();
+  if (fn_var_num >= 26) {
+    func_letter = (char)('A' + (fn_var_num - 26));  /* A-Z */
+  } else {
+    func_letter = (char)('A' + fn_var_num);  /* a-z => A-Z */
+  }
+  
+  #if DEBUG
+    DEBUG_PRINTF("def_statement: Function letter = '%c' (var_num=%d)\n", 
+                 func_letter, fn_var_num);
+  #endif
+  
+  accept(TOKENIZER_VARIABLE);
+  
+  /* Function letter must be A-Z */
+  if (func_letter < 'A' || func_letter > 'Z') {
+    DEBUG_PRINTF("def_statement: Function letter must be A-Z.\n");
+    ended = 1;
+    return;
+  }
+  
+  accept(TOKENIZER_LEFTPAREN);
+  
+  /* Get parameter variable */
+  if (tokenizer_token() != TOKENIZER_VARIABLE) {
+    DEBUG_PRINTF("def_statement: Expected parameter variable.\n");
+    ended = 1;
+    return;
+  }
+  param_var = tokenizer_variable_num();
+  accept(TOKENIZER_VARIABLE);
+  
+  accept(TOKENIZER_RIGHTPAREN);
+  accept(TOKENIZER_EQ);
+  
+  /* Record expression start position */
+  expr_start_ptr = tokenizer_pos();
+  
+  /* Skip to end of line (expression ends at LF or CR) */
+  while (tokenizer_token() != TOKENIZER_LF && 
+         tokenizer_token() != TOKENIZER_CR && 
+         tokenizer_token() != TOKENIZER_ENDOFINPUT) {
+    tokenizer_next();
+  }
+  
+  expr_end_ptr = tokenizer_pos();
+  
+  /* Calculate offsets from program start */
+  expr_start_offset = (uint16_t)(expr_start_ptr - program_ptr);
+  expr_end_offset = (uint16_t)(expr_end_ptr - program_ptr);
+  
+  /* Store function definition */
+  func_index = func_letter - 'A';
+  fn_table[func_index].func_letter = func_letter;
+  fn_table[func_index].param_var = (uint8_t)param_var;
+  fn_table[func_index].expr_start = expr_start_offset;
+  fn_table[func_index].expr_end = expr_end_offset;
+  fn_table[func_index].defined = 1;
+  
+  #if DEBUG
+    {
+      int expr_len = expr_end_offset - expr_start_offset;
+      char expr_text[100];
+      if (expr_len > 0 && expr_len < 99) {
+        memcpy(expr_text, program_ptr + expr_start_offset, expr_len);
+        expr_text[expr_len] = '\0';
+        DEBUG_PRINTF("def_statement: Defined FN%c with param var %d, expr [%u..%u] = '%s'\n",
+                     func_letter, param_var, expr_start_offset, expr_end_offset, expr_text);
+      } else {
+        DEBUG_PRINTF("def_statement: Defined FN%c with param var %d, expr [%u..%u]\n",
+                     func_letter, param_var, expr_start_offset, expr_end_offset);
+      }
+    }
+  #endif
+  
+  accept(TOKENIZER_LF);
+}
+/*---------------------------------------------------------------------------*/
 static void read_statement(void){
   /* READ statement - read values from DATA statements
    * Based on C# working implementation:
@@ -1654,6 +1879,7 @@ static void read_statement(void){
   char str_value[MAX_STRINGLEN];
   int found_data;
   
+  DEBUG_PRINTF("read_statement: Starting READ statement.\n");
   accept(TOKENIZER_READ);
   
   /* Loop through variables to read */
@@ -1713,8 +1939,7 @@ static void read_statement(void){
     /* Calculate data_pos from offset and start searching */
     data_pos = tokenizer_start() + *data_ptr_cell;
     tokenizer_goto(data_pos);
-    DEBUG_PRINTF("read_statement: Starting search from offset %d, next 10 chars: '%.10s'\n", 
-                 *data_ptr_cell, data_pos);
+    DEBUG_PRINTF("read_statement: Starting search from offset %d\n", *data_ptr_cell);
     
     /* Check if we're continuing from a previous DATA line (data_ptr_cell > 0 and we're at a value) */
     if (*data_ptr_cell > 0 && (tokenizer_token() == TOKENIZER_NUMBER || tokenizer_token() == TOKENIZER_STRING)) {
@@ -1725,12 +1950,10 @@ static void read_statement(void){
       /* Search for next DATA statement */
       DEBUG_PRINTF("read_statement: Searching for DATA statement\n");
       while (tokenizer_token() != TOKENIZER_ENDOFINPUT && !found_data) {
-        /* Skip to next line or DATA statement */
-        while (tokenizer_token() != TOKENIZER_LF &&
-               tokenizer_token() != TOKENIZER_DATA &&
-               tokenizer_token() != TOKENIZER_REM &&
-               tokenizer_token() != TOKENIZER_ENDOFINPUT) {
+        /* Check current line first, then advance to next line if needed. */
+        if (tokenizer_token() == TOKENIZER_NUMBER) {
           tokenizer_next();
+          DEBUG_PRINTF("#");
         }
         
         if (tokenizer_token() == TOKENIZER_DATA) {
@@ -1738,15 +1961,12 @@ static void read_statement(void){
           found_data = 1;
           break;
         }
-        
-        if (tokenizer_token() == TOKENIZER_REM) {
-          /* Skip REM comments - go to end of line */
-          tokenizer_skip();
-          continue;
-        }
-        
+
         if (tokenizer_token() == TOKENIZER_LF) {
           tokenizer_next();
+        } else {
+          tokenizer_skip();
+          DEBUG_PRINTF(".");
         }
       }
     }
@@ -1827,12 +2047,26 @@ static void read_statement(void){
     if (tokenizer_token() == TOKENIZER_COMMA) {
       accept(TOKENIZER_COMMA);
     } else {
+      /* No more variables - advance to end of statement */
+      while (tokenizer_token() != TOKENIZER_LF &&
+             tokenizer_token() != TOKENIZER_CR &&
+             tokenizer_token() != TOKENIZER_ENDOFINPUT) {
+        tokenizer_next();
+      }
       break;
     }
-  } while (tokenizer_token() != TOKENIZER_LF && 
-           tokenizer_token() != TOKENIZER_ENDOFINPUT);
+  } while (1);
   
-  accept(TOKENIZER_LF);
+  /* Accept line ending (LF or CR) */
+  if (tokenizer_token() == TOKENIZER_LF) {
+    accept(TOKENIZER_LF);
+  } else if (tokenizer_token() == TOKENIZER_CR) {
+    accept(TOKENIZER_CR);
+    /* Some files may have LF after CR */
+    if (tokenizer_token() == TOKENIZER_LF) {
+      accept(TOKENIZER_LF);
+    }
+  }
   DEBUG_PRINTF("read_statement: READ complete.\n");
 }
 /*---------------------------------------------------------------------------*/
@@ -1847,7 +2081,14 @@ static void if_statement(void){
   #endif
   accept(TOKENIZER_THEN);
   if(r) {
-    statement();
+    /* Check for implicit GOTO: IF condition THEN linenumber */
+    DEBUG_PRINTF("if_statement: r=true, next token=%d\n", tokenizer_token());
+    if (tokenizer_token() == TOKENIZER_NUMBER) {
+      DEBUG_PRINTF("if_statement: Implicit GOTO to %u\n", tokenizer_linenum());
+      jump_linenum(tokenizer_linenum());
+    } else {
+      statement();
+    }
   } else {
     do {
       tokenizer_next();
@@ -1961,17 +2202,21 @@ static void let_statement(void){
 }
 /*---------------------------------------------------------------------------*/
 static void gosub_statement(void) {
-  int linenum;
+  uint32_t target_line;
+  uint32_t return_line;
+  
   accept(TOKENIZER_GOSUB);
-  linenum = tokenizer_num();
+  target_line = tokenizer_linenum();
   accept(TOKENIZER_NUMBER);
   accept(TOKENIZER_LF);
+  
+  /* After LF, tokenizer is positioned at the next line number */
+  return_line = tokenizer_linenum();
+  
   if(*gosub_depth_cell < UBASIC_MAX_GOSUB_STACK_DEPTH) {
-
-    /* Push the current return line into the configured gosub stack (memory or internal). */
-    gosub_push(tokenizer_num());
-
-    jump_linenum(linenum);
+    /* Push the return line into the gosub stack */
+    gosub_push(return_line);
+    jump_linenum(target_line);
   } else {
     DEBUG_PRINTF("gosub_statement: gosub stack exhausted.\n");
   }
@@ -1980,7 +2225,7 @@ static void gosub_statement(void) {
 static void return_statement(void){
   accept(TOKENIZER_RETURN);
   if(*gosub_depth_cell > 0) {
-    int32_t retline = gosub_pop();
+    uint32_t retline = gosub_pop();
     jump_linenum(retline);
   } else {
     DEBUG_PRINTF("return_statement: non-matching return.\n");
@@ -2054,7 +2299,7 @@ static void for_statement(void) {
   accept(TOKENIZER_LF);
 
   for_state st;
-  st.line_after_for = (int32_t)tokenizer_num();
+  st.line_after_for = tokenizer_linenum();
   st.for_variable_index = (int32_t)for_variable;
   st.to = (int32_t)to;
   st.step = (int32_t)step;
@@ -2322,6 +2567,9 @@ static void statement(void){
   case TOKENIZER_DATA:
     data_statement();
     break;
+  case TOKENIZER_DEF:
+    def_statement();
+    break;
   case TOKENIZER_RESTORE:
     restore_statement();
     break;
@@ -2350,19 +2598,24 @@ static void statement(void){
 }
 /*---------------------------------------------------------------------------*/
 static void line_statement(void){
+  /* Save position before executing line for resume capability */
+  save_position();
+  
   #if VERBOSE
-    DEBUG_PRINTF("----------- Line number %d ---------\n", tokenizer_num());
+    DEBUG_PRINTF("----------- Line number %u ---------\n", tokenizer_linenum());
   #endif
-  index_add(tokenizer_num(), tokenizer_pos());
+  index_add(tokenizer_linenum(), tokenizer_pos());
   accept(TOKENIZER_NUMBER);
   statement();
 }
 /*---------------------------------------------------------------------------*/
 static void set_variable(int varnum, VARIABLE_TYPE value) {
-  char varname = 'a' + (char)varnum;
+  char varname;
   var_desc_t *v;
   
-  if (varnum < 0 || varnum >= 26) return;
+  if (varnum < 0 || varnum >= 26) return;  /* Only lowercase a-z */
+  
+  varname = 'a' + (char)varnum;
   
   v = find_or_create_variable(varname, VARTYPE_INTEGER);
   if (v != NULL) {
@@ -2371,10 +2624,12 @@ static void set_variable(int varnum, VARIABLE_TYPE value) {
 }
 /*---------------------------------------------------------------------------*/
 static VARIABLE_TYPE get_variable(int varnum) {
-  char varname = 'a' + (char)varnum;
+  char varname;
   var_desc_t *v;
   
-  if (varnum < 0 || varnum >= 26) return 0;
+  if (varnum < 0 || varnum >= 26) return 0;  /* Only lowercase a-z */
+  
+  varname = 'a' + (char)varnum;
   
   v = find_or_create_variable(varname, VARTYPE_INTEGER);
   return (v != NULL) ? v->int_value : 0;
@@ -2383,13 +2638,15 @@ static VARIABLE_TYPE get_variable(int varnum) {
 // string additions
 /*---------------------------------------------------------------------------*/
 void set_stringvariable(int svarnum, char *svalue) {
-  char varname = 'a' + (char)svarnum;
+  char varname;
   var_desc_t *v;
   size_t len;
   uint16_t offset;
 
   if (svalue == NULL || mem_base == NULL) return;
-  if (svarnum < 0 || svarnum >= 26) return;
+  if (svarnum < 0 || svarnum >= 26) return;  /* Only lowercase a-z */
+  
+  varname = 'a' + (char)svarnum;
   
   v = find_or_create_variable(varname, VARTYPE_STRING);
   if (v == NULL) return;
@@ -2418,21 +2675,37 @@ void set_stringvariable(int svarnum, char *svalue) {
 }
 /*---------------------------------------------------------------------------*/
 char *get_stringvariable(int varnum) {
-  char varname = 'a' + (char)varnum;
+  char varname;
   var_desc_t *v;
   
-  if (varnum < 0 || varnum >= 26 || mem_base == NULL) {
+  if (varnum < 0 || varnum >= 26 || mem_base == NULL) {  /* Only lowercase a-z */
+    #if DEBUG
+      DEBUG_PRINTF("get_stringvariable: Invalid varnum %d or no mem_base\n", varnum);
+    #endif
     return scpy(nullstring);
   }
   
-  v = find_variable(varname);
-  if (v == NULL || v->type != VARTYPE_STRING) {
+  varname = 'a' + (char)varnum;
+  
+  v = find_variable(varname, VARTYPE_STRING);
+  if (v == NULL) {
+    #if DEBUG
+      DEBUG_PRINTF("get_stringvariable: Variable %c$ not found\n", varname);
+    #endif
     return scpy(nullstring);
   }
   
   if (v->str_offset == 0) {
+    #if DEBUG
+      DEBUG_PRINTF("get_stringvariable: Variable %c$ has zero offset\n", varname);
+    #endif
     return scpy(nullstring);
   }
+  
+  #if DEBUG
+    DEBUG_PRINTF("get_stringvariable: %c$ = '%s' (offset %u)\n", 
+                 varname, (char *)(mem_base + v->str_offset), (unsigned)v->str_offset);
+  #endif
   
   return (char *)(mem_base + v->str_offset);
 }
@@ -2448,8 +2721,8 @@ static VARIABLE_TYPE get_array_element(int varnum, uint16_t idx1, uint16_t idx2,
     return 0;
   }
   
-  v = find_variable(varname);
-  if (v == NULL || v->type != VARTYPE_ARRAY) {
+  v = find_variable(varname, VARTYPE_ARRAY);
+  if (v == NULL) {
     DEBUG_PRINTF("get_array_element: Variable %c is not an array\n", varname);
     return 0;
   }
@@ -2497,8 +2770,8 @@ static void set_array_element(int varnum, uint16_t idx1, uint16_t idx2, uint16_t
     return;
   }
   
-  v = find_variable(varname);
-  if (v == NULL || v->type != VARTYPE_ARRAY) {
+  v = find_variable(varname, VARTYPE_ARRAY);
+  if (v == NULL) {
     DEBUG_PRINTF("set_array_element: Variable %c is not an array\n", varname);
     ended = 1;
     return;
@@ -2557,8 +2830,8 @@ static char* get_stringarray_element(int varnum, uint16_t idx1, uint16_t idx2, u
     return scpy(nullstring);
   }
   
-  v = find_variable(varname);
-  if (v == NULL || v->type != VARTYPE_STRING_ARRAY) {
+  v = find_variable(varname, VARTYPE_STRING_ARRAY);
+  if (v == NULL) {
     DEBUG_PRINTF("get_stringarray_element: Variable %c$ is not a string array\n", varname);
     return scpy(nullstring);
   }
@@ -2621,8 +2894,8 @@ static void set_stringarray_element(int varnum, uint16_t idx1, uint16_t idx2, ui
     return;
   }
   
-  v = find_variable(varname);
-  if (v == NULL || v->type != VARTYPE_STRING_ARRAY) {
+  v = find_variable(varname, VARTYPE_STRING_ARRAY);
+  if (v == NULL) {
     DEBUG_PRINTF("set_stringarray_element: Variable %c$ is not a string array\n", varname);
     ended = 1;
     return;
@@ -2692,6 +2965,8 @@ static void set_stringarray_element(int varnum, uint16_t idx1, uint16_t idx2, ui
   #endif
 }
 /*---------------------------------------------------------------------------*/
+// end of string additions
+/*---------------------------------------------------------------------------*/
 void ubasic_set_out_function(out_func func) {
   out_function = func;
 }
@@ -2708,7 +2983,7 @@ void ubasic_set_get_function(get_func func) {
   get_function = func;
 }
 /*---------------------------------------------------------------------------*/
-static int32_t gosub_pop(void) {
+static uint32_t gosub_pop(void) {
   int32_t ptr = *gosub_depth_cell;
   if (ptr == 0) {
     DEBUG_PRINTF("gosub_pop: underflow (ptr=0)\n");
@@ -2718,11 +2993,8 @@ static int32_t gosub_pop(void) {
   *gosub_depth_cell = ptr;
   return gosub_stack_mem[ptr];
 }
-
 /*---------------------------------------------------------------------------*/
-// end of string additions
-/*---------------------------------------------------------------------------*/
-static void gosub_push(int32_t line_num) {
+static void gosub_push(uint32_t line_num) {
   int32_t ptr = *gosub_depth_cell;
   if (ptr >= UBASIC_MAX_GOSUB_STACK_DEPTH) {
     DEBUG_PRINTF("gosub_push: overflow (ptr=%d)\n", (int)ptr);
