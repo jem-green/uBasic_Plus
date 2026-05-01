@@ -1,4 +1,4 @@
-1 print "start"
-2 data 100
-3 print "end"
-4 end
+1 PRINT "start"
+2 DATA 100
+3 PRINT "end"
+4 END

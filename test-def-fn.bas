@@ -1,0 +1,8 @@
+10 REM TEST DEF FN
+20 DEF FNa(X)=INT(20*RND(1))+1
+30 DEF FNb(y)=y*y
+40 PRINT "FNa(0)="; FNa(0)
+50 PRINT "FNa(0)="; FNa(0)
+60 PRINT "FNb(5)="; FNb(5)
+70 PRINT "FNb(10)="; FNb(10)
+80 END

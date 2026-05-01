@@ -1,0 +1,9 @@
+10 REM Test DATA then DEF
+20 DIM a(3)
+30 FOR i=1 TO 3
+40 READ a(i)
+50 NEXT i
+60 DATA 10,20,30
+70 DEF FNa(x)=x*2
+80 PRINT FNa(5)
+90 END

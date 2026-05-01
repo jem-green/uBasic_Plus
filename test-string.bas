@@ -23,4 +23,5 @@
 24 i=INSTR(3, "123456789", "67")
 24 PRINT "position of '67' in '123456789' is", i
 25 PRINT MID$(a$,2,2)+"xyx"
-30 PRINT "END of test"
+30 PRINT "end of test"
+40 END
