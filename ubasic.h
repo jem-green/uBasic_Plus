@@ -43,14 +43,14 @@
 
 #include "vartype.h"
 
+typedef VARIABLE_TYPE (*peek_func)(VARIABLE_TYPE);
+typedef void (*poke_func)(VARIABLE_TYPE, VARIABLE_TYPE);
+
 /* I/O function pointers matching C# wrapper API */
 typedef void (*out_func)(const char *message);
 typedef void (*put_func)(char character);
 typedef void (*in_func)(char *buffer, size_t max_len);
 typedef char (*get_func)(void);
-
-typedef VARIABLE_TYPE (*peek_func)(VARIABLE_TYPE);
-typedef void (*poke_func)(VARIABLE_TYPE, VARIABLE_TYPE);
 
 /*
  * 8-bit style dynamic allocation layout:
@@ -79,7 +79,8 @@ typedef void (*poke_func)(VARIABLE_TYPE, VARIABLE_TYPE);
 #endif
 #define UBASIC_MAX_GOSUB_STACK_DEPTH 10
 #define UBASIC_MAX_FOR_STACK_DEPTH 4
-#define UBASIC_VARIABLE_COUNT 26
+#define UBASIC_VARIABLE_INDEXES_PER_LETTER 11 /* bare + 0..9 */
+#define UBASIC_VARIABLE_COUNT (26 * UBASIC_VARIABLE_INDEXES_PER_LETTER)
 
 #ifndef UBASIC_HEAP_BYTES
 #define UBASIC_HEAP_BYTES 0
@@ -88,8 +89,8 @@ typedef void (*poke_func)(VARIABLE_TYPE, VARIABLE_TYPE);
 #define UBASIC_PRINT_ZONE_WIDTH 14
 
 typedef struct for_state {
-  int32_t line_after_for;
-  int32_t for_variable_index; /* 0..51 (a-z then A-Z) */
+  uint32_t line_after_for;
+  int32_t for_variable_index; /* 0..285 (a..z, a0..z9) */
   int32_t to;
   int32_t step;
 } for_state;
@@ -122,7 +123,7 @@ typedef struct for_state {
 #pragma pack(push, 1)
 /* Variable descriptor - allocated in heap on first use */
 typedef struct {
-  char name;              /* 'a'..'z' */
+  uint16_t var_id;        /* 0..285 (a..z, a0..z9) */
   uint8_t type;           /* VARTYPE_* */
   union {
     VARIABLE_TYPE int_value;
@@ -146,6 +147,15 @@ typedef struct {
   uint16_t dim_size[3];   /* dimension sizes */
 } string_array_desc_t;
 
+/* DEF FN function definition */
+typedef struct {
+  char func_letter;        /* 'A'..'Z' */
+  uint16_t param_var;      /* Parameter variable number (0..285) */
+  uint16_t expr_start;     /* Offset in program where expression starts */
+  uint16_t expr_end;       /* Offset in program where expression ends */
+  uint8_t defined;         /* 1 if function is defined, 0 otherwise */
+} fn_def_t;
+
 /* Heap state - immediately after program */
 typedef struct {
   uint16_t var_heap_top;  /* Grows UP from heap_state + sizeof */
@@ -155,9 +165,10 @@ typedef struct {
 #pragma pack(pop)
 
 #define UBASIC_HEAP_STATE_SIZE ((int)sizeof(heap_state_t))
+#define UBASIC_VAR_TABLE_BYTES (UBASIC_VARIABLE_COUNT * (int)sizeof(var_desc_t))
 
 #define UBASIC_MIN_MEMORY_BYTES \
-  (UBASIC_MEM_PROGRAM_OFFSET + 256u + UBASIC_HEAP_STATE_SIZE + 512u)
+  (UBASIC_MEM_PROGRAM_OFFSET + 256u + UBASIC_HEAP_STATE_SIZE + UBASIC_VAR_TABLE_BYTES + 512u)
 
 // Possibly public
 

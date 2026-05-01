@@ -164,8 +164,8 @@ static char* sstr(int);
 static char* schr(int);
 static int sinstr(int, const char*, const char*);
 static void str_pool_compact(void);
-static var_desc_t *find_variable(char name, uint8_t type);
-static var_desc_t *find_or_create_variable(char name, uint8_t type);
+static var_desc_t *find_variable(uint16_t var_id, uint8_t type);
+static var_desc_t *find_or_create_variable(uint16_t var_id, uint8_t type);
 static uint16_t str_pool_alloc(uint16_t size);
 // end of string additions
 
@@ -183,7 +183,20 @@ static var_desc_t *get_var_table(void) {
   return (var_desc_t *)((uint8_t *)heap_state + sizeof(heap_state_t));
 }
 
-static var_desc_t *find_variable(char name, uint8_t type) {
+static int varnum_is_valid(int varnum) {
+  return varnum >= 0 && varnum < UBASIC_VARIABLE_COUNT;
+}
+
+static int varnum_letter_index(int varnum) {
+  return varnum / UBASIC_VARIABLE_INDEXES_PER_LETTER;
+}
+
+static int varnum_suffix_digit(int varnum) {
+  int suffix = varnum % UBASIC_VARIABLE_INDEXES_PER_LETTER;
+  return (suffix == 0) ? -1 : (suffix - 1);
+}
+
+static var_desc_t *find_variable(uint16_t var_id, uint8_t type) {
   var_desc_t *vartab;
   uint16_t i;
   
@@ -191,7 +204,7 @@ static var_desc_t *find_variable(char name, uint8_t type) {
   vartab = get_var_table();
   
   #if DEBUG
-    DEBUG_PRINTF("find_variable: Looking for '%c' type %d, var_count=%u\n", name, type, (unsigned)heap_state->var_count);
+    DEBUG_PRINTF("find_variable: Looking for id=%u type %d, var_count=%u\n", (unsigned)var_id, type, (unsigned)heap_state->var_count);
   #endif
   
   fflush(stderr);  /* Force output before loop */
@@ -199,13 +212,13 @@ static var_desc_t *find_variable(char name, uint8_t type) {
     DEBUG_PRINTF("find_variable: Loop start, i=%u\n", (unsigned)i);
     fflush(stderr);
     #if DEBUG
-      DEBUG_PRINTF("find_variable: Checking var[%u] name='%c' type=%d (expected '%c' type=%d)\n", 
-                   (unsigned)i, vartab[i].name, vartab[i].type, name, type);
+      DEBUG_PRINTF("find_variable: Checking var[%u] id=%u type=%d (expected id=%u type=%d)\n", 
+                   (unsigned)i, (unsigned)vartab[i].var_id, vartab[i].type, (unsigned)var_id, type);
     #endif
     fflush(stderr);
-    if (vartab[i].name == name && vartab[i].type == type) {
+    if (vartab[i].var_id == var_id && vartab[i].type == type) {
       #if DEBUG
-        DEBUG_PRINTF("find_variable: Found '%c' type %d at index %u\n", name, type, (unsigned)i);
+        DEBUG_PRINTF("find_variable: Found id=%u type %d at index %u\n", (unsigned)var_id, type, (unsigned)i);
       #endif
       return &vartab[i];
     }
@@ -213,12 +226,12 @@ static var_desc_t *find_variable(char name, uint8_t type) {
     fflush(stderr);
   }
   #if DEBUG
-    DEBUG_PRINTF("find_variable: '%c' type %d not found\n", name, type);
+    DEBUG_PRINTF("find_variable: id=%u type %d not found\n", (unsigned)var_id, type);
   #endif
   return NULL;
 }
 
-static var_desc_t *create_variable(char name, uint8_t type) {
+static var_desc_t *create_variable(uint16_t var_id, uint8_t type) {
   var_desc_t *vartab;
   var_desc_t *newvar;
   uint16_t var_table_end;
@@ -229,6 +242,12 @@ static var_desc_t *create_variable(char name, uint8_t type) {
   }
   
   vartab = get_var_table();
+
+  if (heap_state->var_count >= UBASIC_VARIABLE_COUNT) {
+    DEBUG_PRINTF("create_variable: Variable table full\n");
+    ended = 1;
+    return NULL;
+  }
   
   /* Variables are stored contiguously starting after heap_state */
   /* Calculate where the variable table ends (NOT var_heap_top!) */
@@ -251,28 +270,28 @@ static var_desc_t *create_variable(char name, uint8_t type) {
   /* New variable goes at the end of the variable table */
   newvar = &vartab[heap_state->var_count];
   
-  newvar->name = name;
+  newvar->var_id = var_id;
   newvar->type = type;
   newvar->int_value = 0;  /* Initialize to zero */
   
   heap_state->var_count++;
   
   #if VERBOSE
-    DEBUG_PRINTF("create_variable: Created '%c' type %d at index %u (offset %u)\n",
-                 name, type, (unsigned)(heap_state->var_count - 1),
+    DEBUG_PRINTF("create_variable: Created id=%u type %d at index %u (offset %u)\n",
+                 (unsigned)var_id, type, (unsigned)(heap_state->var_count - 1),
                  (unsigned)((uint8_t*)newvar - mem_base));
   #endif
   
   return newvar;
 }
 
-static var_desc_t *find_or_create_variable(char name, uint8_t type) {
-  var_desc_t *v = find_variable(name, type);
+static var_desc_t *find_or_create_variable(uint16_t var_id, uint8_t type) {
+  var_desc_t *v = find_variable(var_id, type);
   if (v != NULL) {
     return v;
   }
   /* Create new variable */
-  return create_variable(name, type);
+  return create_variable(var_id, type);
 }
 
 static uint16_t heap_alloc(uint16_t size) {
@@ -341,9 +360,15 @@ void ubasic_init(uint8_t *memory, uint32_t memory_bytes) {
   /* Heap state immediately after program offset (program loaded later) */
   heap_state_offset = UBASIC_MEM_PROGRAM_OFFSET + 1;
   heap_state = (heap_state_t *)(memory + heap_state_offset);
+
+  if (heap_state_offset + UBASIC_HEAP_STATE_SIZE + UBASIC_VAR_TABLE_BYTES >= memory_bytes) {
+    DEBUG_PRINTF("ubasic_init: insufficient memory for variable table\n");
+    ended = 1;
+    return;
+  }
   
   /* Initialize heap - heap grows UP, string pool grows DOWN */
-  heap_state->var_heap_top = (uint16_t)(heap_state_offset + UBASIC_HEAP_STATE_SIZE);
+  heap_state->var_heap_top = (uint16_t)(heap_state_offset + UBASIC_HEAP_STATE_SIZE + UBASIC_VAR_TABLE_BYTES);
   heap_state->str_pool_base = (uint16_t)memory_bytes;
   heap_state->var_count = 0;
   
@@ -437,7 +462,7 @@ void ubasic_load_program(const char *program) {
   heap_state_offset = program_end;
   
   /* Check program fits before heap state */
-  if (program_end + UBASIC_HEAP_STATE_SIZE >= mem_capacity_bytes) {
+  if (program_end + UBASIC_HEAP_STATE_SIZE + UBASIC_VAR_TABLE_BYTES >= mem_capacity_bytes) {
     DEBUG_PRINTF("ubasic_load_program: program too large (%u bytes)\n", (unsigned)len);
     return;
   }
@@ -450,7 +475,7 @@ void ubasic_load_program(const char *program) {
   
   /* Reset heap - position heap_state after program */
   heap_state = (heap_state_t *)(mem_base + heap_state_offset);
-  heap_state->var_heap_top = (uint16_t)(heap_state_offset + UBASIC_HEAP_STATE_SIZE);
+  heap_state->var_heap_top = (uint16_t)(heap_state_offset + UBASIC_HEAP_STATE_SIZE + UBASIC_VAR_TABLE_BYTES);
   heap_state->str_pool_base = (uint16_t)mem_capacity_bytes;
   heap_state->var_count = 0;
   
@@ -634,7 +659,7 @@ static void var_init() {
   
   if (heap_state != NULL && mem_base != NULL) {
     size_t heap_state_offset = (uint8_t *)heap_state - mem_base;
-    heap_state->var_heap_top = (uint16_t)(heap_state_offset + UBASIC_HEAP_STATE_SIZE);
+    heap_state->var_heap_top = (uint16_t)(heap_state_offset + UBASIC_HEAP_STATE_SIZE + UBASIC_VAR_TABLE_BYTES);
     heap_state->str_pool_base = (uint16_t)mem_capacity_bytes;
     heap_state->var_count = 0;
   }
@@ -1073,13 +1098,15 @@ static int factor(void) {
         break;
       }
       
-      /* Variable numbering: 0-25 = a-z, 26-51 = A-Z */
+      /* Function names remain single-letter (a-z only). */
       var_num = tokenizer_variable_num();
-      if (var_num >= 26) {
-        func_letter = (char)('A' + (var_num - 26));  /* A-Z */
-      } else {
-        func_letter = (char)('A' + var_num);  /* a-z => A-Z */
+      if (!varnum_is_valid(var_num) || varnum_suffix_digit(var_num) >= 0) {
+        DEBUG_PRINTF("factor: Function name after FN must be a single letter.\n");
+        ended = 1;
+        r = 0;
+        break;
       }
+      func_letter = (char)('A' + varnum_letter_index(var_num));
       
       accept(TOKENIZER_VARIABLE);
       
@@ -1780,13 +1807,14 @@ static void def_statement(void){
     return;
   }
   
-  /* Variable numbering: 0-25 = a-z, 26-51 = A-Z */
+  /* Function names remain single-letter (a-z only). */
   fn_var_num = tokenizer_variable_num();
-  if (fn_var_num >= 26) {
-    func_letter = (char)('A' + (fn_var_num - 26));  /* A-Z */
-  } else {
-    func_letter = (char)('A' + fn_var_num);  /* a-z => A-Z */
+  if (!varnum_is_valid(fn_var_num) || varnum_suffix_digit(fn_var_num) >= 0) {
+    DEBUG_PRINTF("def_statement: Function letter must be single-letter a-z.\n");
+    ended = 1;
+    return;
   }
+  func_letter = (char)('A' + varnum_letter_index(fn_var_num));
   
   #if DEBUG
     DEBUG_PRINTF("def_statement: Function letter = '%c' (var_num=%d)\n", 
@@ -1811,6 +1839,11 @@ static void def_statement(void){
     return;
   }
   param_var = tokenizer_variable_num();
+  if (!varnum_is_valid(param_var)) {
+    DEBUG_PRINTF("def_statement: Invalid parameter variable.\n");
+    ended = 1;
+    return;
+  }
   accept(TOKENIZER_VARIABLE);
   
   accept(TOKENIZER_RIGHTPAREN);
@@ -1835,7 +1868,7 @@ static void def_statement(void){
   /* Store function definition */
   func_index = func_letter - 'A';
   fn_table[func_index].func_letter = func_letter;
-  fn_table[func_index].param_var = (uint8_t)param_var;
+  fn_table[func_index].param_var = (uint16_t)param_var;
   fn_table[func_index].expr_start = expr_start_offset;
   fn_table[func_index].expr_end = expr_end_offset;
   fn_table[func_index].defined = 1;
@@ -2347,7 +2380,7 @@ static void end_statement(void)
 /*---------------------------------------------------------------------------*/
 static void dim_statement(void) {
   int var;
-  char varname;
+  uint16_t var_id;
   var_desc_t *v;
   uint16_t dim1, dim2 = 1, dim3 = 1;
   uint16_t total_elements;
@@ -2366,11 +2399,21 @@ static void dim_statement(void) {
   if (tokenizer_token() == TOKENIZER_STRINGVARIABLE) {
     is_string = 1;
     var = tokenizer_variable_num();
-    varname = 'a' + (char)var;
+    if (!varnum_is_valid(var)) {
+      DEBUG_PRINTF("dim_statement: Invalid string variable index.\n");
+      ended = 1;
+      return;
+    }
+    var_id = (uint16_t)var;
     accept(TOKENIZER_STRINGVARIABLE);
   } else if (tokenizer_token() == TOKENIZER_VARIABLE) {
     var = tokenizer_variable_num();
-    varname = 'a' + (char)var;
+    if (!varnum_is_valid(var)) {
+      DEBUG_PRINTF("dim_statement: Invalid variable index.\n");
+      ended = 1;
+      return;
+    }
+    var_id = (uint16_t)var;
     accept(TOKENIZER_VARIABLE);
   } else {
     DEBUG_PRINTF("dim_statement: Expected variable name.\n");
@@ -2411,7 +2454,7 @@ static void dim_statement(void) {
     data_bytes = total_elements * sizeof(uint16_t);
     
     #if VERBOSE
-      DEBUG_PRINTF("dim_statement: DIM %c$(%u", varname, (unsigned)dim1);
+      DEBUG_PRINTF("dim_statement: DIM id=%u$(%u", (unsigned)var_id, (unsigned)dim1);
       if (dim2 > 1) DEBUG_PRINTF(",%u", (unsigned)dim2);
       if (dim3 > 1) DEBUG_PRINTF(",%u", (unsigned)dim3);
       DEBUG_PRINTF(") = %u elements, %u bytes\n", 
@@ -2419,7 +2462,7 @@ static void dim_statement(void) {
     #endif
     
     /* Create string array variable */
-    v = find_or_create_variable(varname, VARTYPE_STRING_ARRAY);
+    v = find_or_create_variable(var_id, VARTYPE_STRING_ARRAY);
     if (v == NULL) {
       DEBUG_PRINTF("dim_statement: Failed to create string array variable.\n");
       ended = 1;
@@ -2466,7 +2509,7 @@ static void dim_statement(void) {
     data_bytes = total_elements * sizeof(VARIABLE_TYPE);
     
     #if VERBOSE
-      DEBUG_PRINTF("dim_statement: DIM %c(%u", varname, (unsigned)dim1);
+      DEBUG_PRINTF("dim_statement: DIM id=%u(%u", (unsigned)var_id, (unsigned)dim1);
       if (dim2 > 1) DEBUG_PRINTF(",%u", (unsigned)dim2);
       if (dim3 > 1) DEBUG_PRINTF(",%u", (unsigned)dim3);
       DEBUG_PRINTF(") = %u elements, %u bytes\n", 
@@ -2474,7 +2517,7 @@ static void dim_statement(void) {
     #endif
     
     /* Create array variable */
-    v = find_or_create_variable(varname, VARTYPE_ARRAY);
+    v = find_or_create_variable(var_id, VARTYPE_ARRAY);
     if (v == NULL) {
       DEBUG_PRINTF("dim_statement: Failed to create variable.\n");
       ended = 1;
@@ -2610,45 +2653,45 @@ static void line_statement(void){
 }
 /*---------------------------------------------------------------------------*/
 static void set_variable(int varnum, VARIABLE_TYPE value) {
-  char varname;
+  uint16_t var_id;
   var_desc_t *v;
   
-  if (varnum < 0 || varnum >= 26) return;  /* Only lowercase a-z */
+  if (varnum < 0 || varnum >= UBASIC_VARIABLE_COUNT) return;
   
-  varname = 'a' + (char)varnum;
+  var_id = (uint16_t)varnum;
   
-  v = find_or_create_variable(varname, VARTYPE_INTEGER);
+  v = find_or_create_variable(var_id, VARTYPE_INTEGER);
   if (v != NULL) {
     v->int_value = value;
   }
 }
 /*---------------------------------------------------------------------------*/
 static VARIABLE_TYPE get_variable(int varnum) {
-  char varname;
+  uint16_t var_id;
   var_desc_t *v;
   
-  if (varnum < 0 || varnum >= 26) return 0;  /* Only lowercase a-z */
+  if (varnum < 0 || varnum >= UBASIC_VARIABLE_COUNT) return 0;
   
-  varname = 'a' + (char)varnum;
+  var_id = (uint16_t)varnum;
   
-  v = find_or_create_variable(varname, VARTYPE_INTEGER);
+  v = find_or_create_variable(var_id, VARTYPE_INTEGER);
   return (v != NULL) ? v->int_value : 0;
 }
 /*---------------------------------------------------------------------------*/
 // string additions
 /*---------------------------------------------------------------------------*/
 void set_stringvariable(int svarnum, char *svalue) {
-  char varname;
+  uint16_t var_id;
   var_desc_t *v;
   size_t len;
   uint16_t offset;
 
   if (svalue == NULL || mem_base == NULL) return;
-  if (svarnum < 0 || svarnum >= 26) return;  /* Only lowercase a-z */
+  if (svarnum < 0 || svarnum >= UBASIC_VARIABLE_COUNT) return;
   
-  varname = 'a' + (char)svarnum;
+  var_id = (uint16_t)svarnum;
   
-  v = find_or_create_variable(varname, VARTYPE_STRING);
+  v = find_or_create_variable(var_id, VARTYPE_STRING);
   if (v == NULL) return;
   
   len = strlen(svalue);
@@ -2669,61 +2712,61 @@ void set_stringvariable(int svarnum, char *svalue) {
   v->str_offset = offset;
   
   #if VERBOSE
-    DEBUG_PRINTF("set_stringvariable: Assigned '%s' to %c$ at offset %u\n",
-                 svalue, varname, (unsigned)offset);
+    DEBUG_PRINTF("set_stringvariable: Assigned '%s' to id=%u$ at offset %u\n",
+                 svalue, (unsigned)var_id, (unsigned)offset);
   #endif
 }
 /*---------------------------------------------------------------------------*/
 char *get_stringvariable(int varnum) {
-  char varname;
+  uint16_t var_id;
   var_desc_t *v;
   
-  if (varnum < 0 || varnum >= 26 || mem_base == NULL) {  /* Only lowercase a-z */
+  if (varnum < 0 || varnum >= UBASIC_VARIABLE_COUNT || mem_base == NULL) {
     #if DEBUG
       DEBUG_PRINTF("get_stringvariable: Invalid varnum %d or no mem_base\n", varnum);
     #endif
     return scpy(nullstring);
   }
   
-  varname = 'a' + (char)varnum;
+  var_id = (uint16_t)varnum;
   
-  v = find_variable(varname, VARTYPE_STRING);
+  v = find_variable(var_id, VARTYPE_STRING);
   if (v == NULL) {
     #if DEBUG
-      DEBUG_PRINTF("get_stringvariable: Variable %c$ not found\n", varname);
+      DEBUG_PRINTF("get_stringvariable: Variable id=%u$ not found\n", (unsigned)var_id);
     #endif
     return scpy(nullstring);
   }
   
   if (v->str_offset == 0) {
     #if DEBUG
-      DEBUG_PRINTF("get_stringvariable: Variable %c$ has zero offset\n", varname);
+      DEBUG_PRINTF("get_stringvariable: Variable id=%u$ has zero offset\n", (unsigned)var_id);
     #endif
     return scpy(nullstring);
   }
   
   #if DEBUG
-    DEBUG_PRINTF("get_stringvariable: %c$ = '%s' (offset %u)\n", 
-                 varname, (char *)(mem_base + v->str_offset), (unsigned)v->str_offset);
+    DEBUG_PRINTF("get_stringvariable: id=%u$ = '%s' (offset %u)\n", 
+                 (unsigned)var_id, (char *)(mem_base + v->str_offset), (unsigned)v->str_offset);
   #endif
   
   return (char *)(mem_base + v->str_offset);
 }
 /*---------------------------------------------------------------------------*/
 static VARIABLE_TYPE get_array_element(int varnum, uint16_t idx1, uint16_t idx2, uint16_t idx3) {
-  char varname = 'a' + (char)varnum;
+  uint16_t var_id = (uint16_t)varnum;
   var_desc_t *v;
   array_desc_t *arr_desc;
   VARIABLE_TYPE *arr_data;
   uint16_t offset;
   
-  if (varnum < 0 || varnum >= 26 || mem_base == NULL) {
+  if (varnum < 0 || varnum >= UBASIC_VARIABLE_COUNT || mem_base == NULL) {
     return 0;
   }
   
-  v = find_variable(varname, VARTYPE_ARRAY);
+  v = find_variable(var_id, VARTYPE_ARRAY);
   if (v == NULL) {
-    DEBUG_PRINTF("get_array_element: Variable %c is not an array\n", varname);
+    DEBUG_PRINTF("get_array_element: Variable id=%u is not an array\n", (unsigned)var_id);
     return 0;
   }
   
@@ -2760,19 +2803,19 @@ static VARIABLE_TYPE get_array_element(int varnum, uint16_t idx1, uint16_t idx2,
 }
 /*---------------------------------------------------------------------------*/
 static void set_array_element(int varnum, uint16_t idx1, uint16_t idx2, uint16_t idx3, VARIABLE_TYPE value) {
-  char varname = 'a' + (char)varnum;
+  uint16_t var_id = (uint16_t)varnum;
   var_desc_t *v;
   array_desc_t *arr_desc;
   VARIABLE_TYPE *arr_data;
   uint16_t offset;
   
-  if (varnum < 0 || varnum >= 26 || mem_base == NULL) {
+  if (varnum < 0 || varnum >= UBASIC_VARIABLE_COUNT || mem_base == NULL) {
     return;
   }
   
-  v = find_variable(varname, VARTYPE_ARRAY);
+  v = find_variable(var_id, VARTYPE_ARRAY);
   if (v == NULL) {
-    DEBUG_PRINTF("set_array_element: Variable %c is not an array\n", varname);
+    DEBUG_PRINTF("set_array_element: Variable id=%u is not an array\n", (unsigned)var_id);
     ended = 1;
     return;
   }
@@ -2812,7 +2855,7 @@ static void set_array_element(int varnum, uint16_t idx1, uint16_t idx2, uint16_t
   arr_data[offset] = value;
   
   #if VERBOSE
-    DEBUG_PRINTF("set_array_element: %c(%u", varname, (unsigned)idx1);
+    DEBUG_PRINTF("set_array_element: id=%u(%u", (unsigned)var_id, (unsigned)idx1);
     if (arr_desc->dimensions >= 2) DEBUG_PRINTF(",%u", (unsigned)idx2);
     if (arr_desc->dimensions >= 3) DEBUG_PRINTF(",%u", (unsigned)idx3);
     DEBUG_PRINTF(") = %d\n", (int)value);
@@ -2820,19 +2863,19 @@ static void set_array_element(int varnum, uint16_t idx1, uint16_t idx2, uint16_t
 }
 /*---------------------------------------------------------------------------*/
 static char* get_stringarray_element(int varnum, uint16_t idx1, uint16_t idx2, uint16_t idx3) {
-  char varname = 'a' + (char)varnum;
+  uint16_t var_id = (uint16_t)varnum;
   var_desc_t *v;
   string_array_desc_t *arr_desc;
   uint16_t *arr_data;
   uint16_t offset, str_offset;
   
-  if (varnum < 0 || varnum >= 26 || mem_base == NULL) {
+  if (varnum < 0 || varnum >= UBASIC_VARIABLE_COUNT || mem_base == NULL) {
     return scpy(nullstring);
   }
   
-  v = find_variable(varname, VARTYPE_STRING_ARRAY);
+  v = find_variable(var_id, VARTYPE_STRING_ARRAY);
   if (v == NULL) {
-    DEBUG_PRINTF("get_stringarray_element: Variable %c$ is not a string array\n", varname);
+    DEBUG_PRINTF("get_stringarray_element: Variable id=%u$ is not a string array\n", (unsigned)var_id);
     return scpy(nullstring);
   }
   
@@ -2869,7 +2912,7 @@ static char* get_stringarray_element(int varnum, uint16_t idx1, uint16_t idx2, u
   str_offset = arr_data[offset];
   
   #if VERBOSE
-    DEBUG_PRINTF("get_stringarray_element: %c$(%u", varname, (unsigned)idx1);
+    DEBUG_PRINTF("get_stringarray_element: id=%u$(%u", (unsigned)var_id, (unsigned)idx1);
     if (arr_desc->dimensions >= 2) DEBUG_PRINTF(",%u", (unsigned)idx2);
     if (arr_desc->dimensions >= 3) DEBUG_PRINTF(",%u", (unsigned)idx3);
     DEBUG_PRINTF(") offset=%u str_offset=%u\n", (unsigned)offset, (unsigned)str_offset);
@@ -2883,20 +2926,20 @@ static char* get_stringarray_element(int varnum, uint16_t idx1, uint16_t idx2, u
 }
 /*---------------------------------------------------------------------------*/
 static void set_stringarray_element(int varnum, uint16_t idx1, uint16_t idx2, uint16_t idx3, const char* value) {
-  char varname = 'a' + (char)varnum;
+  uint16_t var_id = (uint16_t)varnum;
   var_desc_t *v;
   string_array_desc_t *arr_desc;
   uint16_t *arr_data;
   uint16_t offset, str_offset;
   size_t len;
   
-  if (varnum < 0 || varnum >= 26 || mem_base == NULL || value == NULL) {
+  if (varnum < 0 || varnum >= UBASIC_VARIABLE_COUNT || mem_base == NULL || value == NULL) {
     return;
   }
   
-  v = find_variable(varname, VARTYPE_STRING_ARRAY);
+  v = find_variable(var_id, VARTYPE_STRING_ARRAY);
   if (v == NULL) {
-    DEBUG_PRINTF("set_stringarray_element: Variable %c$ is not a string array\n", varname);
+    DEBUG_PRINTF("set_stringarray_element: Variable id=%u$ is not a string array\n", (unsigned)var_id);
     ended = 1;
     return;
   }
@@ -2958,7 +3001,7 @@ static void set_stringarray_element(int varnum, uint16_t idx1, uint16_t idx2, ui
   arr_data[offset] = str_offset;
   
   #if VERBOSE
-    DEBUG_PRINTF("set_stringarray_element: %c$(%u", varname, (unsigned)idx1);
+    DEBUG_PRINTF("set_stringarray_element: id=%u$(%u", (unsigned)var_id, (unsigned)idx1);
     if (arr_desc->dimensions >= 2) DEBUG_PRINTF(",%u", (unsigned)idx2);
     if (arr_desc->dimensions >= 3) DEBUG_PRINTF(",%u", (unsigned)idx3);
     DEBUG_PRINTF(") = '%s'\n", value);

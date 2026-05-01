@@ -294,15 +294,20 @@ static int get_next_token(void) {
   }
 
   if(*ptr >= 'a' && *ptr <= 'z') {
+    const char *vptr = ptr + 1;
+
+    if (isdigit((unsigned char)*vptr)) {
+      ++vptr;
+    }
 
 // string addition
-    if (*(ptr+1) == '$') {
-       nextptr = ptr + 2;
+    if (*vptr == '$') {
+       nextptr = vptr + 1;
 	   return TOKENIZER_STRINGVARIABLE;
 	}
 // end of string addition
 
-    nextptr = ptr + 1;
+    nextptr = vptr;
     return TOKENIZER_VARIABLE;
   }
 
@@ -430,7 +435,11 @@ int tokenizer_finished(void) {
 /*---------------------------------------------------------------------------*/
 int tokenizer_variable_num(void) {
   if(*ptr >= 'a' && *ptr <= 'z') {
-    return *ptr - 'a';
+    int varnum = (*ptr - 'a') * TOKENIZER_VARIABLE_INDEXES_PER_LETTER;
+    if (isdigit((unsigned char)*(ptr + 1))) {
+      varnum += (*(ptr + 1) - '0') + 1;
+    }
+    return varnum;
   }
   return -1;
 }

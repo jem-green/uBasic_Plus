@@ -98,12 +98,25 @@ This document tracks the implementation status of Dartmouth BASIC v4 features in
 - **Description**: Halts execution (similar to END but semantically different for debugging)
 - **Complexity**: Low (simple statement)
 
-### ❌ DEF FN / FN
-- **Status**: Not implemented
-- **Syntax**: `DEF FN letter(variable) = expression`
-- **Usage**: `FN letter(variable)`
-- **Description**: User-defined functions
-- **Complexity**: Medium (requires function table, evaluation context)
+### ✅ DEF FN / FN
+- **Status**: ✅ Fully implemented and tested
+- **Syntax**: 
+  - Definition: `DEF FN letter(variable) = expression`
+  - Usage: `FN letter(variable)`
+- **Description**: User-defined functions with single parameter
+- **Features**:
+  - Function table supports A-Z (26 functions)
+  - Parameter substitution during evaluation
+  - Expression evaluated in function's context
+  - Preserves parameter variable state (save/restore)
+- **Implementation**:
+  - `fn_def_t` structure stores function definitions
+  - Static array `fn_table[26]` for A-Z functions
+  - DEF statement parser stores expression offsets
+  - FN evaluator uses tokenizer_goto for expression evaluation
+- **Tests**:
+  - test-def-fn.bas ✅ (basic function definitions)
+  - Wumpus.bas ✅ (real-world usage with RND functions)
 
 ## Removed Features
 
