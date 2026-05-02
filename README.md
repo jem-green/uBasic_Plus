@@ -13,7 +13,7 @@ http://www.zenoshrdlu.com/kapstuff/zsubasic.html
 
 Largely for fun I decided to add string handling. The version downloadable here is a stand-alone interpreter that does not include the CHDK enhancements (that version is here) so for example, all lines must have line numbers). It offers the following enhancements over Adam's original:
 
-https://github.com/mkostrun/UBASIC-PLUS
+https://github.com/jem-green/uBasic-Math
 
-The aim was to use this version but ran into issues compiling the floating point maths approach
+Updated uBasic to support floating point variables and math functions
 

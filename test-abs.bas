@@ -1,0 +1,2 @@
+10 PRINT ABS(-5)
+20 END

@@ -160,7 +160,7 @@ static char* sconcat(const char *, const char *);
 static char* sleft(const char *, int); 
 static char* sright(const char *,int);
 static char* smid(const char *, int, int);
-static char* sstr(int);
+static char* sstr(VARIABLE_TYPE);
 static char* schr(int);
 static int sinstr(int, const char*, const char*);
 static void str_pool_compact(void);
@@ -779,12 +779,12 @@ static char* smid(const char *s1, int l1, int l2) { // return the l2 chars of s1
    return stringbuffer + rp;
 }
 /*---------------------------------------------------------------------------*/
-static char* sstr(int j) { // return the integer j as a string
+static char* sstr(VARIABLE_TYPE j) { // return the value j as a string
    int bp = freebufptr;
    int rp = bp;
    if (string_space_check(10))
       return nullstring;
-   sprintf((stringbuffer+bp),"%d",j);
+  sprintf((stringbuffer+bp),"%g",j);
    freebufptr = bp + strlen(stringbuffer+bp) + 1;
    return stringbuffer + rp;
 }
@@ -935,8 +935,8 @@ static int slogexpr() { // string logical expression
 /*---------------------------------------------------------------------------*/
 // end of string additions
 /*---------------------------------------------------------------------------*/
-static int varfactor(void) {
-  int r;
+static VARIABLE_TYPE varfactor(void) {
+  VARIABLE_TYPE r;
   int var;
   uint16_t idx1 = 0, idx2 = 0, idx3 = 0;
   
@@ -968,8 +968,8 @@ static int varfactor(void) {
   return r;
 }
 /*---------------------------------------------------------------------------*/
-static int factor(void) {
-  int r;
+static VARIABLE_TYPE factor(void) {
+  VARIABLE_TYPE r;
  // string function additions
   int j;
   char *s, *s1;
@@ -982,7 +982,7 @@ static int factor(void) {
       break;  
     case TOKENIZER_VAL:
      accept(TOKENIZER_VAL);
-     r = atoi(sexpr());
+      r = strtod(sexpr(), NULL);
 	 break;
    case TOKENIZER_ASC:
     accept(TOKENIZER_ASC);
@@ -1018,7 +1018,7 @@ static int factor(void) {
   case TOKENIZER_INT:
     accept(TOKENIZER_INT);
     accept(TOKENIZER_LEFTPAREN);
-    r = (int)floor((double)expr());
+    r = floor(expr());
     accept(TOKENIZER_RIGHTPAREN);
     break;
   case TOKENIZER_SGN:
@@ -1031,50 +1031,49 @@ static int factor(void) {
   case TOKENIZER_SQR:
     accept(TOKENIZER_SQR);
     accept(TOKENIZER_LEFTPAREN);
-    r = (int)sqrt((double)expr());
+    r = sqrt(expr());
     accept(TOKENIZER_RIGHTPAREN);
     break;
   case TOKENIZER_RND:
     accept(TOKENIZER_RND);
     accept(TOKENIZER_LEFTPAREN);
-    j = expr();
+    r = (rand() / (double)RAND_MAX) * expr();
     accept(TOKENIZER_RIGHTPAREN);
-    r = (int)((rand() / (double)RAND_MAX) * j);
     break;
   case TOKENIZER_SIN:
     accept(TOKENIZER_SIN);
     accept(TOKENIZER_LEFTPAREN);
-    r = (int)(sin((double)expr()) * 1000);
+    r = sin(expr());
     accept(TOKENIZER_RIGHTPAREN);
     break;
   case TOKENIZER_COS:
     accept(TOKENIZER_COS);
     accept(TOKENIZER_LEFTPAREN);
-    r = (int)(cos((double)expr()) * 1000);
+    r = cos(expr());
     accept(TOKENIZER_RIGHTPAREN);
     break;
   case TOKENIZER_TAN:
     accept(TOKENIZER_TAN);
     accept(TOKENIZER_LEFTPAREN);
-    r = (int)(tan((double)expr()) * 1000);
+    r = tan(expr());
     accept(TOKENIZER_RIGHTPAREN);
     break;
   case TOKENIZER_ATN:
     accept(TOKENIZER_ATN);
     accept(TOKENIZER_LEFTPAREN);
-    r = (int)(atan((double)expr()) * 1000);
+    r = atan(expr());
     accept(TOKENIZER_RIGHTPAREN);
     break;
   case TOKENIZER_EXP:
     accept(TOKENIZER_EXP);
     accept(TOKENIZER_LEFTPAREN);
-    r = (int)exp((double)expr());
+    r = exp(expr());
     accept(TOKENIZER_RIGHTPAREN);
     break;
   case TOKENIZER_LOG:
     accept(TOKENIZER_LOG);
     accept(TOKENIZER_LEFTPAREN);
-    r = (int)(log((double)expr()) * 1000);
+    r = log(expr());
     accept(TOKENIZER_RIGHTPAREN);
     break;
   case TOKENIZER_FN:
@@ -1180,15 +1179,15 @@ static int factor(void) {
   /* Handle exponentiation (right-associative) */
   if (tokenizer_token() == TOKENIZER_POWER) {
     accept(TOKENIZER_POWER);
-    r = (int)pow((double)r, (double)factor());
+    r = pow(r, factor());
   }
   
   DEBUG_PRINTF("term: %d.\n", r);
   return r;
 }
 /*---------------------------------------------------------------------------*/
-static int term(void) {
-  int f1, f2;
+static VARIABLE_TYPE term(void) {
+  VARIABLE_TYPE f1, f2;
   int op;
   if (tokenizer_stringlookahead()) {
     f1 = slogexpr();
@@ -1210,7 +1209,7 @@ static int term(void) {
         f1 = f1 / f2;
         break;
        case TOKENIZER_MOD:
-        f1 = f1 % f2;
+        f1 = fmod(f1, f2);
         break;
      }
      op = tokenizer_token();
@@ -1221,7 +1220,7 @@ static int term(void) {
 }
 /*---------------------------------------------------------------------------*/
 static VARIABLE_TYPE expr(void){
-  int t1, t2;
+  VARIABLE_TYPE t1, t2;
   int op;
   int unary_minus = 0;
   
@@ -1262,7 +1261,7 @@ static VARIABLE_TYPE expr(void){
 }
 /*---------------------------------------------------------------------------*/
 static int relation(void){
-  int r1, r2;
+  VARIABLE_TYPE r1, r2;
   int op;
 
   r1 = expr();
@@ -1515,7 +1514,7 @@ static void print_statement(void) {
       if (tokenizer_stringlookahead()) {
         sprintf(buf+strlen(buf), "%s", sexpr());
       } else {
-        sprintf(buf+strlen(buf), "%d", expr());
+        sprintf(buf+strlen(buf), "%g", expr());
       }
     }
     
@@ -1561,7 +1560,7 @@ static void print_statement(void) {
         if (tokenizer_stringlookahead()) {
           sprintf(buf+strlen(buf), "%s", sexpr());
         } else {
-          sprintf(buf+strlen(buf), "%d", expr());
+          sprintf(buf+strlen(buf), "%g", expr());
         }
       }
     }
@@ -1666,27 +1665,8 @@ static void input_statement(void) {
       }
     } else {
       /* Numeric variable */
-      VARIABLE_TYPE value = 0;
-      int negative = 0;
-      
-      /* Handle negative sign */
-      if (*input_ptr == '-') {
-        negative = 1;
-        input_ptr++;
-      } else if (*input_ptr == '+') {
-        input_ptr++;
-      }
-      
-      /* Parse digits */
-      while (*input_ptr >= '0' && *input_ptr <= '9') {
-        value = value * 10 + (*input_ptr - '0');
-        input_ptr++;
-      }
-      
-      if (negative) {
-        value = -value;
-      }
-      
+      VARIABLE_TYPE value;
+      value = strtod(input_ptr, &input_ptr);
       set_variable(var, value);
     }
     
@@ -2022,7 +2002,7 @@ static void read_statement(void){
         accept(TOKENIZER_STRING);
       } else if (tokenizer_token() == TOKENIZER_NUMBER) {
         /* Allow numbers in string variables */
-        snprintf(str_value, sizeof(str_value), "%d", tokenizer_num());
+        snprintf(str_value, sizeof(str_value), "%g", tokenizer_num());
         accept(TOKENIZER_NUMBER);
       } else {
         DEBUG_PRINTF("read_statement: Expected string or number in DATA\n");
@@ -2047,7 +2027,7 @@ static void read_statement(void){
       } else if (tokenizer_token() == TOKENIZER_STRING) {
         /* Try to parse string as number */
         tokenizer_string(str_value, sizeof(str_value));
-        value = atoi(str_value);
+        value = strtod(str_value, NULL);
         accept(TOKENIZER_STRING);
       } else {
         DEBUG_PRINTF("read_statement: Expected number in DATA\n");
@@ -2446,8 +2426,8 @@ static void dim_statement(void) {
     return;
   }
   
-  /* Calculate total size */
-  total_elements = dim1 * dim2 * dim3;
+  /* Calculate total size - allocate N+1 elements so both 0..N and 1..N are valid */
+  total_elements = (dim1 + 1) * (dim2 + (dim2 > 1 ? 1 : 0)) * (dim3 + (dim3 > 1 ? 1 : 0));
   
   if (is_string) {
     /* String array - stores offsets (uint16_t) */
@@ -2772,30 +2752,30 @@ static VARIABLE_TYPE get_array_element(int varnum, uint16_t idx1, uint16_t idx2,
   
   arr_desc = (array_desc_t *)(mem_base + v->arr_offset);
   
-  /* Validate indices */
-  if (idx1 >= arr_desc->dim_size[0]) {
-    DEBUG_PRINTF("get_array_element: Index 1 (%u) out of bounds (max %u)\n", 
+  /* Validate indices (0..N, where N = declared dimension) */
+  if (idx1 > arr_desc->dim_size[0]) {
+    DEBUG_PRINTF("get_array_element: Index 1 (%u) out of bounds (valid range 0..%u)\n", 
                  (unsigned)idx1, (unsigned)arr_desc->dim_size[0]);
     return 0;
   }
-  if (arr_desc->dimensions >= 2 && idx2 >= arr_desc->dim_size[1]) {
-    DEBUG_PRINTF("get_array_element: Index 2 (%u) out of bounds (max %u)\n", 
+  if (arr_desc->dimensions >= 2 && idx2 > arr_desc->dim_size[1]) {
+    DEBUG_PRINTF("get_array_element: Index 2 (%u) out of bounds (valid range 0..%u)\n", 
                  (unsigned)idx2, (unsigned)arr_desc->dim_size[1]);
     return 0;
   }
-  if (arr_desc->dimensions >= 3 && idx3 >= arr_desc->dim_size[2]) {
-    DEBUG_PRINTF("get_array_element: Index 3 (%u) out of bounds (max %u)\n", 
+  if (arr_desc->dimensions >= 3 && idx3 > arr_desc->dim_size[2]) {
+    DEBUG_PRINTF("get_array_element: Index 3 (%u) out of bounds (valid range 0..%u)\n", 
                  (unsigned)idx3, (unsigned)arr_desc->dim_size[2]);
     return 0;
   }
   
-  /* Calculate linear offset */
+  /* Calculate linear offset (0-based direct) */
   if (arr_desc->dimensions == 1) {
     offset = idx1;
   } else if (arr_desc->dimensions == 2) {
-    offset = idx1 * arr_desc->dim_size[1] + idx2;
+    offset = idx1 * (arr_desc->dim_size[1] + 1) + idx2;
   } else {
-    offset = (idx1 * arr_desc->dim_size[1] + idx2) * arr_desc->dim_size[2] + idx3;
+    offset = (idx1 * (arr_desc->dim_size[1] + 1) + idx2) * (arr_desc->dim_size[2] + 1) + idx3;
   }
   
   arr_data = (VARIABLE_TYPE *)(mem_base + arr_desc->data_offset);
@@ -2822,33 +2802,33 @@ static void set_array_element(int varnum, uint16_t idx1, uint16_t idx2, uint16_t
   
   arr_desc = (array_desc_t *)(mem_base + v->arr_offset);
   
-  /* Validate indices */
-  if (idx1 >= arr_desc->dim_size[0]) {
-    DEBUG_PRINTF("set_array_element: Index 1 (%u) out of bounds (max %u)\n", 
+  /* Validate indices (0..N, where N = declared dimension) */
+  if (idx1 > arr_desc->dim_size[0]) {
+    DEBUG_PRINTF("set_array_element: Index 1 (%u) out of bounds (valid range 0..%u)\n", 
                  (unsigned)idx1, (unsigned)arr_desc->dim_size[0]);
     ended = 1;
     return;
   }
-  if (arr_desc->dimensions >= 2 && idx2 >= arr_desc->dim_size[1]) {
-    DEBUG_PRINTF("set_array_element: Index 2 (%u) out of bounds (max %u)\n", 
+  if (arr_desc->dimensions >= 2 && idx2 > arr_desc->dim_size[1]) {
+    DEBUG_PRINTF("set_array_element: Index 2 (%u) out of bounds (valid range 0..%u)\n", 
                  (unsigned)idx2, (unsigned)arr_desc->dim_size[1]);
     ended = 1;
     return;
   }
-  if (arr_desc->dimensions >= 3 && idx3 >= arr_desc->dim_size[2]) {
-    DEBUG_PRINTF("set_array_element: Index 3 (%u) out of bounds (max %u)\n", 
+  if (arr_desc->dimensions >= 3 && idx3 > arr_desc->dim_size[2]) {
+    DEBUG_PRINTF("set_array_element: Index 3 (%u) out of bounds (valid range 0..%u)\n", 
                  (unsigned)idx3, (unsigned)arr_desc->dim_size[2]);
     ended = 1;
     return;
   }
   
-  /* Calculate linear offset */
+  /* Calculate linear offset (0-based direct) */
   if (arr_desc->dimensions == 1) {
     offset = idx1;
   } else if (arr_desc->dimensions == 2) {
-    offset = idx1 * arr_desc->dim_size[1] + idx2;
+    offset = idx1 * (arr_desc->dim_size[1] + 1) + idx2;
   } else {
-    offset = (idx1 * arr_desc->dim_size[1] + idx2) * arr_desc->dim_size[2] + idx3;
+    offset = (idx1 * (arr_desc->dim_size[1] + 1) + idx2) * (arr_desc->dim_size[2] + 1) + idx3;
   }
   
   arr_data = (VARIABLE_TYPE *)(mem_base + arr_desc->data_offset);
@@ -2881,30 +2861,30 @@ static char* get_stringarray_element(int varnum, uint16_t idx1, uint16_t idx2, u
   
   arr_desc = (string_array_desc_t *)(mem_base + v->strarr_offset);
   
-  /* Validate indices */
-  if (idx1 >= arr_desc->dim_size[0]) {
-    DEBUG_PRINTF("get_stringarray_element: Index 1 (%u) out of bounds (max %u)\n", 
+  /* Validate indices (0..N, where N = declared dimension) */
+  if (idx1 > arr_desc->dim_size[0]) {
+    DEBUG_PRINTF("get_stringarray_element: Index 1 (%u) out of bounds (valid range 0..%u)\n", 
                  (unsigned)idx1, (unsigned)arr_desc->dim_size[0]);
     return scpy(nullstring);
   }
-  if (arr_desc->dimensions >= 2 && idx2 >= arr_desc->dim_size[1]) {
-    DEBUG_PRINTF("get_stringarray_element: Index 2 (%u) out of bounds (max %u)\n", 
+  if (arr_desc->dimensions >= 2 && idx2 > arr_desc->dim_size[1]) {
+    DEBUG_PRINTF("get_stringarray_element: Index 2 (%u) out of bounds (valid range 0..%u)\n", 
                  (unsigned)idx2, (unsigned)arr_desc->dim_size[1]);
     return scpy(nullstring);
   }
-  if (arr_desc->dimensions >= 3 && idx3 >= arr_desc->dim_size[2]) {
-    DEBUG_PRINTF("get_stringarray_element: Index 3 (%u) out of bounds (max %u)\n", 
+  if (arr_desc->dimensions >= 3 && idx3 > arr_desc->dim_size[2]) {
+    DEBUG_PRINTF("get_stringarray_element: Index 3 (%u) out of bounds (valid range 0..%u)\n", 
                  (unsigned)idx3, (unsigned)arr_desc->dim_size[2]);
     return scpy(nullstring);
   }
   
-  /* Calculate linear offset */
+  /* Calculate linear offset (0-based direct) */
   if (arr_desc->dimensions == 1) {
     offset = idx1;
   } else if (arr_desc->dimensions == 2) {
-    offset = idx1 * arr_desc->dim_size[1] + idx2;
+    offset = idx1 * (arr_desc->dim_size[1] + 1) + idx2;
   } else {
-    offset = (idx1 * arr_desc->dim_size[1] + idx2) * arr_desc->dim_size[2] + idx3;
+    offset = (idx1 * (arr_desc->dim_size[1] + 1) + idx2) * (arr_desc->dim_size[2] + 1) + idx3;
   }
   
   /* Array data contains offsets to strings in string pool */
@@ -2946,33 +2926,33 @@ static void set_stringarray_element(int varnum, uint16_t idx1, uint16_t idx2, ui
   
   arr_desc = (string_array_desc_t *)(mem_base + v->strarr_offset);
   
-  /* Validate indices */
-  if (idx1 >= arr_desc->dim_size[0]) {
-    DEBUG_PRINTF("set_stringarray_element: Index 1 (%u) out of bounds (max %u)\n", 
+  /* Validate indices (0..N, where N = declared dimension) */
+  if (idx1 > arr_desc->dim_size[0]) {
+    DEBUG_PRINTF("set_stringarray_element: Index 1 (%u) out of bounds (valid range 0..%u)\n", 
                  (unsigned)idx1, (unsigned)arr_desc->dim_size[0]);
     ended = 1;
     return;
   }
-  if (arr_desc->dimensions >= 2 && idx2 >= arr_desc->dim_size[1]) {
-    DEBUG_PRINTF("set_stringarray_element: Index 2 (%u) out of bounds (max %u)\n", 
+  if (arr_desc->dimensions >= 2 && idx2 > arr_desc->dim_size[1]) {
+    DEBUG_PRINTF("set_stringarray_element: Index 2 (%u) out of bounds (valid range 0..%u)\n", 
                  (unsigned)idx2, (unsigned)arr_desc->dim_size[1]);
     ended = 1;
     return;
   }
-  if (arr_desc->dimensions >= 3 && idx3 >= arr_desc->dim_size[2]) {
-    DEBUG_PRINTF("set_stringarray_element: Index 3 (%u) out of bounds (max %u)\n", 
+  if (arr_desc->dimensions >= 3 && idx3 > arr_desc->dim_size[2]) {
+    DEBUG_PRINTF("set_stringarray_element: Index 3 (%u) out of bounds (valid range 0..%u)\n", 
                  (unsigned)idx3, (unsigned)arr_desc->dim_size[2]);
     ended = 1;
     return;
   }
   
-  /* Calculate linear offset */
+  /* Calculate linear offset (0-based direct) */
   if (arr_desc->dimensions == 1) {
     offset = idx1;
   } else if (arr_desc->dimensions == 2) {
-    offset = idx1 * arr_desc->dim_size[1] + idx2;
+    offset = idx1 * (arr_desc->dim_size[1] + 1) + idx2;
   } else {
-    offset = (idx1 * arr_desc->dim_size[1] + idx2) * arr_desc->dim_size[2] + idx3;
+    offset = (idx1 * (arr_desc->dim_size[1] + 1) + idx2) * (arr_desc->dim_size[2] + 1) + idx3;
   }
   
   /* Allocate string in string pool */

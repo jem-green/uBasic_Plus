@@ -28,7 +28,7 @@ static void delete_char_array(char *dest, char *position, int numChars);
 static uint32_t find_linenum(uint32_t linenum);
 
 #define MAX_LINE_LENGTH 255
-#define MEMORY_SIZE 8192
+#define MEMORY_SIZE 16384
 #define MAX_PROGRAM_SIZE 4096
 
 static char memory[MEMORY_SIZE];

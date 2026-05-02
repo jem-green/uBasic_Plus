@@ -33,6 +33,6 @@
 
 #include <stdint.h>
 
-#define VARIABLE_TYPE int32_t
+#define VARIABLE_TYPE double
 
 #endif /* __VARTYPE_H__ */

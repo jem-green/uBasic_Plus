@@ -245,24 +245,17 @@ static int get_next_token(void) {
     return TOKENIZER_ENDOFINPUT;
   }
 
-  if(isdigit(*ptr)) {
-    for(i = 0; i < MAX_NUMLEN; ++i) {
-      if(!isdigit(ptr[i])) {
-        if(i > 0) {
-          nextptr = ptr + i;
-          return TOKENIZER_NUMBER;
-        } else {
-          DEBUG_PRINTF("get_next_token: error due to too short number.\n");
-          return TOKENIZER_ERROR;
-        }
-      }
-      if(!isdigit(ptr[i])) {
-        DEBUG_PRINTF("get_next_token: error due to malformed number.\n");
-        return TOKENIZER_ERROR;
-      }
+  if(isdigit(*ptr) || (*ptr == '.' && isdigit(*(ptr+1)))) {
+    /* Use strtod to consume the full number including decimal point and E/e exponent */
+    char *endp;
+    strtod(ptr, &endp);
+    if(endp > ptr) {
+      nextptr = endp;
+      return TOKENIZER_NUMBER;
     }
-    DEBUG_PRINTF("get_next_token: error due to too long number.\n");
-    return TOKENIZER_ERROR;  } else if(*ptr == '<' && (*(ptr + 1) == '=' || *(ptr + 1) == '>')) {
+    DEBUG_PRINTF("get_next_token: error parsing number.\n");
+    return TOKENIZER_ERROR;
+  } else if(*ptr == '<' && (*(ptr + 1) == '=' || *(ptr + 1) == '>')) {
     /* Two-character operators: <= or <> */
     if(*(ptr + 1) == '=') {
       nextptr = ptr + 2;
@@ -396,7 +389,7 @@ void tokenizer_skip(void) {
 /*---------------------------------------------------------------------------*/
 VARIABLE_TYPE tokenizer_num(void)
 {
-  return atoi(ptr);
+  return strtod(ptr, NULL);
 }
 /*---------------------------------------------------------------------------*/
 uint32_t tokenizer_linenum(void)

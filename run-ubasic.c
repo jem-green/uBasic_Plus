@@ -42,7 +42,7 @@
 // main routine modified to allow execution of BASIC script files 
 
 /*---------------------------------------------------------------------------*/
-#define MEMORY_SIZE 8192
+#define MEMORY_SIZE 16384
 
 int main(int argc, char **argv, char **envp)
 {
