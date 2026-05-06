@@ -85,6 +85,9 @@ static const struct keyword_token keywords[] = {
   {"ATN",                     TOKENIZER_ATN},
   {"EXP",                     TOKENIZER_EXP},
   {"LOG",                     TOKENIZER_LOG},
+  {"AND",                     TOKENIZER_AND},
+  {"OR",                      TOKENIZER_OR},
+  {"MOD",                     TOKENIZER_MOD},
 // end of math functions
   {"DEF",                     TOKENIZER_DEF},
   {"FN",                      TOKENIZER_FN},
@@ -100,7 +103,6 @@ static const struct keyword_token keywords[] = {
   {"PRINT", TOKENIZER_PRINT},
   {"IF", TOKENIZER_IF},
   {"THEN", TOKENIZER_THEN},
-  {"ELSE", TOKENIZER_ELSE},
   {"FOR", TOKENIZER_FOR},
   {"TO", TOKENIZER_TO},
   {"STEP", TOKENIZER_STEP},
@@ -109,11 +111,12 @@ static const struct keyword_token keywords[] = {
   {"GOTO", TOKENIZER_GOTO},
   {"GOSUB", TOKENIZER_GOSUB},
   {"RETURN", TOKENIZER_RETURN},
-  {"CALL", TOKENIZER_CALL},
   {"REM", TOKENIZER_REM},
   {"PEEK", TOKENIZER_PEEK},
   {"POKE", TOKENIZER_POKE},
   {"END", TOKENIZER_END},
+  {"PUSH", TOKENIZER_PUSH},
+  {"POP", TOKENIZER_POP},
   {NULL, TOKENIZER_ERROR}
 };
 
@@ -158,7 +161,7 @@ static const struct keyword_token tokens[] = {
   {"TOKENIZER_PRINT",TOKENIZER_PRINT},
   {"TOKENIZER_IF",TOKENIZER_IF},
   {"TOKENIZER_THEN",TOKENIZER_THEN},
-  {"TOKENIZER_ELSE",TOKENIZER_ELSE},
+
   {"TOKENIZER_FOR",TOKENIZER_FOR},
   {"TOKENIZER_TO",TOKENIZER_TO},
   {"TOKENIZER_STEP",TOKENIZER_STEP},
@@ -167,15 +170,18 @@ static const struct keyword_token tokens[] = {
   {"TOKENIZER_GOTO",TOKENIZER_GOTO},
   {"TOKENIZER_GOSUB",TOKENIZER_GOSUB},
   {"TOKENIZER_RETURN",TOKENIZER_RETURN},
-  {"TOKENIZER_CALL",TOKENIZER_CALL},
   {"TOKENIZER_REM",TOKENIZER_REM},
   {"TOKENIZER_PEEK",TOKENIZER_PEEK},
   {"TOKENIZER_POKE",TOKENIZER_POKE},
   {"TOKENIZER_END",TOKENIZER_END},
+  {"TOKENIZER_PUSH",TOKENIZER_PUSH},
+  {"TOKENIZER_POP",TOKENIZER_POP},
   {"TOKENIZER_COMMA",TOKENIZER_COMMA},
   {"TOKENIZER_SEMICOLON",TOKENIZER_SEMICOLON},
   {"TOKENIZER_PLUS",TOKENIZER_PLUS},
   {"TOKENIZER_MINUS",TOKENIZER_MINUS},
+	{"TOKENIZER_AND",TOKENIZER_AND},
+	{"TOKENIZER_OR",TOKENIZER_OR},
   {"TOKENIZER_ASTR",TOKENIZER_ASTR},
   {"TOKENIZER_SLASH",TOKENIZER_SLASH},
   {"TOKENIZER_MOD",TOKENIZER_MOD},
@@ -191,7 +197,7 @@ static const struct keyword_token tokens[] = {
   {"TOKENIZER_POWER",TOKENIZER_POWER},
   {"TOKENIZER_LF",TOKENIZER_LF},
   {"TOKENIZER_CR",TOKENIZER_CR},
-  {NULL, TOKENIZER_ERROR}
+
 };
 
 /*---------------------------------------------------------------------------*/
@@ -206,6 +212,10 @@ static int singlechar(void){
     return TOKENIZER_PLUS;
   } else if(*ptr == '-') {
     return TOKENIZER_MINUS;
+  } else if(*ptr == '&') {
+    return TOKENIZER_AND;
+  } else if(*ptr == '|') {
+    return TOKENIZER_OR;
   } else if(*ptr == '*') {
     return TOKENIZER_ASTR;
   } else if(*ptr == '/') {
@@ -409,8 +419,8 @@ void tokenizer_string(char *dest, int len){
     return;
   }
   string_len = string_end - ptr - 1;
-  if(len < string_len) {
-    string_len = len;
+  if(len < string_len + 1) {
+    string_len = len - 1;
   }
   memcpy(dest, ptr + 1, string_len);
   dest[string_len] = 0;

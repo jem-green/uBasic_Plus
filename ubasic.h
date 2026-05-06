@@ -51,6 +51,7 @@ typedef void (*out_func)(const char *message);
 typedef void (*put_func)(char character);
 typedef void (*in_func)(char *buffer, size_t max_len);
 typedef char (*get_func)(void);
+typedef void (*err_func)(const char *code, const char *description, uint32_t line);
 
 /*
  * 8-bit style dynamic allocation layout:
@@ -79,6 +80,8 @@ typedef char (*get_func)(void);
 #endif
 #define UBASIC_MAX_GOSUB_STACK_DEPTH 10
 #define UBASIC_MAX_FOR_STACK_DEPTH 4
+#define UBASIC_MAX_PUSH_STACK_DEPTH 16
+#define UBASIC_PUSH_STRING_LEN 40
 #define UBASIC_VARIABLE_INDEXES_PER_LETTER 11 /* bare + 0..9 */
 #define UBASIC_VARIABLE_COUNT (26 * UBASIC_VARIABLE_INDEXES_PER_LETTER)
 
@@ -95,6 +98,12 @@ typedef struct for_state {
   int32_t step;
 } for_state;
 
+typedef struct push_entry {
+  int32_t type;                          /* 0 = numeric, 1 = string */
+  VARIABLE_TYPE ival;
+  char sval[UBASIC_PUSH_STRING_LEN + 1];
+} push_entry;
+
 /* Control state at low addresses */
 #define UBASIC_MEM_RESUME_OFFSET      0
 #define UBASIC_MEM_GOSUB_DEPTH_OFFSET 4
@@ -103,11 +112,17 @@ typedef struct for_state {
 #define UBASIC_MEM_GOSUB_STACK_OFFSET 16
 #define UBASIC_MEM_FOR_STACK_OFFSET \
   (UBASIC_MEM_GOSUB_STACK_OFFSET + UBASIC_MAX_GOSUB_STACK_DEPTH * (int)sizeof(int32_t))
+/* PUSH/POP stack: depth cell + typed push_entry slots */
+#define UBASIC_MEM_PUSH_DEPTH_OFFSET \
+  (UBASIC_MEM_FOR_STACK_OFFSET + UBASIC_MAX_FOR_STACK_DEPTH * (int)sizeof(for_state))
+#define UBASIC_MEM_PUSH_STACK_OFFSET \
+  (UBASIC_MEM_PUSH_DEPTH_OFFSET + (int)sizeof(int32_t))
 /* Program starts immediately after control structures */
 #define UBASIC_MEM_PROGRAM_OFFSET \
-  (UBASIC_MEM_FOR_STACK_OFFSET + UBASIC_MAX_FOR_STACK_DEPTH * (int)sizeof(for_state))
+  (UBASIC_MEM_PUSH_STACK_OFFSET + UBASIC_MAX_PUSH_STACK_DEPTH * (int)sizeof(push_entry))
 
 /* Variables and strings at TOP of memory (calculated at runtime) */
+#define UBASIC_PUSH_STACK_SIZE (UBASIC_MAX_PUSH_STACK_DEPTH * (int)sizeof(push_entry))
 
 /* These offsets are calculated from END of memory in ubasic_init */
 /* variables_mem = memory + (mem_bytes - UBASIC_VARIABLES_SIZE) */
@@ -188,5 +203,9 @@ void ubasic_set_out_function(out_func func);
 void ubasic_set_put_function(put_func func);
 void ubasic_set_in_function(in_func func);
 void ubasic_set_get_function(get_func func);
+void ubasic_set_error_function(err_func func);
+const char *ubasic_last_error_code(void);
+const char *ubasic_last_error_description(void);
+uint32_t ubasic_last_error_line(void);
 
 #endif /* __UBASIC_H__ */

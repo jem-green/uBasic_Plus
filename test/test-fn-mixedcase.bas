@@ -1,0 +1,5 @@
+10 DEF FNa(x)=INT(20*RND(1))+1
+20 DEF FNb(x)=INT(3*RND(1))+1
+30 DEF FNc(x)=INT(4*RND(1))+1
+40 PRINT FNa(0);FNb(0);FNc(0)
+50 END
