@@ -34,8 +34,8 @@
  * Changes and additions are marked 'string additions' throughout
  */
  
-#define DEBUG 0
-#define VERBOSE 0
+#define DEBUG 1
+#define VERBOSE 1
 
 #if DEBUG
 #define DEBUG_PRINTF(...)  printf(__VA_ARGS__)
@@ -51,7 +51,9 @@
 #include <stdlib.h> /* exit() */
 #include <string.h> /* strlen(), memcpy(), sprintf() */
 #include <stdint.h>
-#include <math.h> /* Math functions */
+/* math additions */
+#include <math.h>
+/* end of math additions */
 
 // Probably private
 
@@ -73,6 +75,9 @@ static void gosub_push(uint32_t line_num);
 static uint32_t gosub_pop(void);
 static void for_push(for_state state);
 static for_state for_pop(void);
+static void push_statement(void);
+static void pop_statement(void);
+static void runtime_error(const char *code, const char *description, uint32_t line);
 
 static char const *program_ptr;
 #define MAX_STRINGLEN 40
@@ -86,6 +91,8 @@ static int32_t *for_depth_cell = NULL;
 static int32_t *data_ptr_cell = NULL;
 static int32_t *gosub_stack_mem = NULL;
 static for_state *for_stack = NULL;
+static int32_t *push_depth_cell = NULL;
+static push_entry *push_stack_mem = NULL;
 static VARIABLE_TYPE *variables_mem = NULL;
 static heap_state_t *heap_state = NULL;
 
@@ -115,6 +122,7 @@ struct line_index *line_index_current = NULL;
 
 
 static int ended;
+static uint32_t current_line_number;
 
 static VARIABLE_TYPE expr(void);
 static void line_statement(void);
@@ -130,6 +138,14 @@ static void default_out_function(const char *message) {
   printf("%s", message);
 }
 
+/* Error handling function pointers and state */
+static void default_error_function(const char *code, const char *description, uint32_t line) {
+  if(line > 0) {
+    fprintf(stderr, "%s %s on line %u\n", code, description, line);
+  } else {
+    fprintf(stderr, "%s %s\n", code, description);
+  }
+}
 static void default_in_function(char *buffer, size_t max_len) {
   if (fgets(buffer, (int)max_len, stdin) != NULL) {
     /* Remove trailing newline if present */
@@ -141,6 +157,11 @@ static void default_in_function(char *buffer, size_t max_len) {
     buffer[0] = '\0';
   }
 }
+
+static err_func error_function = default_error_function;
+static char last_error_code[3] = "";
+static const char *last_error_description = "";
+static uint32_t last_error_line = 0;
 
 out_func out_function = default_out_function;  /* Default to printf wrapper */
 put_func put_function = NULL;
@@ -356,6 +377,8 @@ void ubasic_init(uint8_t *memory, uint32_t memory_bytes) {
   data_ptr_cell = (int32_t *)(memory + UBASIC_MEM_DATA_PTR_OFFSET);
   gosub_stack_mem = (int32_t *)(memory + UBASIC_MEM_GOSUB_STACK_OFFSET);
   for_stack = (for_state *)(memory + UBASIC_MEM_FOR_STACK_OFFSET);
+  push_depth_cell = (int32_t *)(memory + UBASIC_MEM_PUSH_DEPTH_OFFSET);
+  push_stack_mem = (push_entry *)(memory + UBASIC_MEM_PUSH_STACK_OFFSET);
   
   /* Heap state immediately after program offset (program loaded later) */
   heap_state_offset = UBASIC_MEM_PROGRAM_OFFSET + 1;
@@ -418,14 +441,42 @@ static void reset_control_state(void) {
   if (data_ptr_cell != NULL) {
     *data_ptr_cell = 0;
   }
+  if (push_depth_cell != NULL) {
+    *push_depth_cell = 0;
+  }
   if (gosub_stack_mem != NULL) {
     memset(gosub_stack_mem, 0, UBASIC_MAX_GOSUB_STACK_DEPTH * sizeof(int32_t));
   }
   if (for_stack != NULL) {
     memset(for_stack, 0, UBASIC_MAX_FOR_STACK_DEPTH * sizeof(for_state));
   }
-  
+    if (push_depth_cell != NULL) {
+    *push_depth_cell = 0;
+  }
+  if (push_stack_mem != NULL) {
+    memset(push_stack_mem, 0, UBASIC_MAX_PUSH_STACK_DEPTH * sizeof(push_entry));
+  }
+  last_error_code[0] = '\0';
+  last_error_description = "";
+  last_error_line = 0;
+  current_line_number = 0;
   ended = 0;
+}
+/*---------------------------------------------------------------------------*/
+static void runtime_error(const char *code, const char *description, uint32_t line) {
+  if(code != NULL && code[0] != '\0') {
+    last_error_code[0] = code[0];
+    last_error_code[1] = code[1] != '\0' ? code[1] : '\0';
+    last_error_code[2] = '\0';
+  } else {
+    last_error_code[0] = '\0';
+  }
+  last_error_description = description != NULL ? description : "";
+  last_error_line = line;
+  if(error_function != NULL) {
+    error_function(last_error_code, last_error_description, line);
+  }
+  ended = 1;
 }
 /*---------------------------------------------------------------------------*/
 void ubasic_reset(void) {
@@ -547,8 +598,8 @@ static void accept(int token){
     DEBUG_PRINTF("accept: Token not what was expected (expected '%s', got %s).\n",
     tokenizer_token_name(token),
     tokenizer_token_name(tokenizer_token()));
-    tokenizer_error_print();
-    exit(1);
+    runtime_error("TS", "Token syntax mismatch", current_line_number);
+    return;
   }
   DEBUG_PRINTF("accept: Expected '%s', got it.\n", tokenizer_token_name(token));
   tokenizer_next();
@@ -941,7 +992,7 @@ static VARIABLE_TYPE varfactor(void) {
   uint16_t idx1 = 0, idx2 = 0, idx3 = 0;
   
   var = tokenizer_variable_num();
-  DEBUG_PRINTF("varfactor: obtaining %d from variable %d.\n", get_variable(var), var);
+  DEBUG_PRINTF("varfactor: obtaining %g from variable %d.\n", get_variable(var), var);
   accept(TOKENIZER_VARIABLE);
   
   /* Check for array indexing */
@@ -1031,8 +1082,13 @@ static VARIABLE_TYPE factor(void) {
   case TOKENIZER_SQR:
     accept(TOKENIZER_SQR);
     accept(TOKENIZER_LEFTPAREN);
-    r = sqrt(expr());
+    r = expr();
     accept(TOKENIZER_RIGHTPAREN);
+    if(r < 0) {
+      runtime_error("DM", "SQR domain error", current_line_number);
+      return 0;
+    }
+    r = sqrt(r);
     break;
   case TOKENIZER_RND:
     accept(TOKENIZER_RND);
@@ -1069,12 +1125,21 @@ static VARIABLE_TYPE factor(void) {
     accept(TOKENIZER_LEFTPAREN);
     r = exp(expr());
     accept(TOKENIZER_RIGHTPAREN);
+    if(!isfinite(r)) {
+      runtime_error("OF", "EXP overflow", current_line_number);
+      return 0;
+    }
     break;
   case TOKENIZER_LOG:
     accept(TOKENIZER_LOG);
     accept(TOKENIZER_LEFTPAREN);
-    r = log(expr());
+    r = expr();
     accept(TOKENIZER_RIGHTPAREN);
+    if(r <= 0) {
+      runtime_error("DM", "LOG domain error", current_line_number);
+      return 0;
+    }
+    r = log(r);
     break;
   case TOKENIZER_FN:
     /* User-defined function */
@@ -1132,8 +1197,8 @@ static VARIABLE_TYPE factor(void) {
       set_variable(fn_table[func_index].param_var, arg_value);
       
       #if DEBUG
-        DEBUG_PRINTF("factor: Set param var %d to %d (was %d)\n",
-                     fn_table[func_index].param_var, arg_value, saved_param_value);
+         DEBUG_PRINTF("factor: Set param var %d to %g (was %g)\n",
+           fn_table[func_index].param_var, (double)arg_value, (double)saved_param_value);
       #endif
       
       /* Save current tokenizer position */
@@ -1155,7 +1220,7 @@ static VARIABLE_TYPE factor(void) {
       tokenizer_goto(saved_pos);
       
       #if DEBUG
-        DEBUG_PRINTF("factor: FN%c(%d) = %d\n", func_letter, arg_value, r);
+        DEBUG_PRINTF("factor: FN%c(%g) = %g\n", func_letter, (double)arg_value, (double)r);
       #endif
     }
     break;
@@ -1163,7 +1228,7 @@ static VARIABLE_TYPE factor(void) {
 	 
   case TOKENIZER_NUMBER:
     r = tokenizer_num();
-    DEBUG_PRINTF("factor: number %d.\n", r);
+    DEBUG_PRINTF("factor: number %g.\n", r);
     accept(TOKENIZER_NUMBER);
     break;
   case TOKENIZER_LEFTPAREN:
@@ -1175,14 +1240,20 @@ static VARIABLE_TYPE factor(void) {
     r = varfactor();
     break;
   }
-  
+  /* math additions */
   /* Handle exponentiation (right-associative) */
   if (tokenizer_token() == TOKENIZER_POWER) {
+    VARIABLE_TYPE rhs;
     accept(TOKENIZER_POWER);
-    r = pow(r, factor());
+    rhs = factor();
+    r = pow(r, rhs);
+    if(!isfinite(r)) {
+      runtime_error("DM", "POWER domain/overflow", current_line_number);
+      return 0;
+    }
   }
-  
-  DEBUG_PRINTF("term: %d.\n", r);
+  /* end of math additions */
+  DEBUG_PRINTF("term: %g.\n", r);
   return r;
 }
 /*---------------------------------------------------------------------------*/
@@ -1200,22 +1271,30 @@ static VARIABLE_TYPE term(void) {
      op == TOKENIZER_MOD) {
      tokenizer_next();
      f2 = factor();
-     DEBUG_PRINTF("term: %d %d %d\n", f1, op, f2);
+    DEBUG_PRINTF("term: %g %d %g\n", f1, op, f2); // op is int, f1/f2 are double
      switch(op) {
        case TOKENIZER_ASTR:
         f1 = f1 * f2;
         break;
        case TOKENIZER_SLASH:
+      if(f2 == 0) {
+        runtime_error("/0", "Division by zero", current_line_number);
+        return 0;
+      }
         f1 = f1 / f2;
         break;
        case TOKENIZER_MOD:
+        if(f2 == 0) {
+          runtime_error("/0", "Modulo by zero", current_line_number);
+          return 0;
+        }
         f1 = fmod(f1, f2);
         break;
      }
      op = tokenizer_token();
    }	 
   }
-  DEBUG_PRINTF("term: factor=%d.\n", f1);
+  DEBUG_PRINTF("term: factor=%g.\n", f1);
   return f1;
 }
 /*---------------------------------------------------------------------------*/
@@ -1245,7 +1324,7 @@ static VARIABLE_TYPE expr(void){
        op == TOKENIZER_MINUS) {
     tokenizer_next();
     t2 = term();
-    DEBUG_PRINTF("expr: %d %d %d.\n", t1, op, t2);
+    DEBUG_PRINTF("expr: %g %d %g.\n", t1, op, t2); // op is int, t1/t2 are double
     switch(op) {
     case TOKENIZER_PLUS:
       t1 = t1 + t2;
@@ -1256,7 +1335,7 @@ static VARIABLE_TYPE expr(void){
     }
     op = tokenizer_token();
   }
-  DEBUG_PRINTF("expr: term=%d.\n", t1);
+  DEBUG_PRINTF("expr: term=%g.\n", t1);
   return t1;
 }
 /*---------------------------------------------------------------------------*/
@@ -1275,7 +1354,7 @@ static int relation(void){
        op == TOKENIZER_GE) {
     tokenizer_next();
     r2 = expr();
-    DEBUG_PRINTF("relation: %d %d %d.\n", r1, op, r2);
+    DEBUG_PRINTF("relation: %g %d %g.\n", r1, op, r2); // r1/r2 are double, op is int
     switch(op) {
     case TOKENIZER_LT:
       r1 = r1 < r2;
@@ -1298,7 +1377,7 @@ static int relation(void){
     }
     op = tokenizer_token();
   }
-  DEBUG_PRINTF("relation: expr=%d.\n", r1);
+  DEBUG_PRINTF("relation: expr=%g.\n", r1);
   return r1;
 }
 /*---------------------------------------------------------------------------*/
@@ -1392,7 +1471,7 @@ static void jump_linenum_slow(uint32_t linenum) {
 	#endif
     if(tokenizer_token() == TOKENIZER_ENDOFINPUT) {
       DEBUG_PRINTF("jump_linenum_slow: Line %u not found!\n", linenum);
-      ended = 1;
+      runtime_error("UL", "Undefined line target", current_line_number);
       return;
     }
   }
@@ -2103,15 +2182,12 @@ static void if_statement(void){
       statement();
     }
   } else {
-    do {
+    /* Skip to end of line when condition is false. */
+    while(tokenizer_token() != TOKENIZER_LF &&
+          tokenizer_token() != TOKENIZER_ENDOFINPUT) {
       tokenizer_next();
-    } while(tokenizer_token() != TOKENIZER_ELSE &&
-        tokenizer_token() != TOKENIZER_LF &&
-        tokenizer_token() != TOKENIZER_ENDOFINPUT);
-    if(tokenizer_token() == TOKENIZER_ELSE) {
-      tokenizer_next();
-      statement();
-    } else if(tokenizer_token() == TOKENIZER_LF) {
+    }
+    if(tokenizer_token() == TOKENIZER_LF) {
       tokenizer_next();
     }
   }
@@ -2161,7 +2237,7 @@ static void let_statement(void){
        if (idx3 > 0) DEBUG_PRINTF(",%u", (unsigned)idx3);
        DEBUG_PRINTF(")\n");
      } else {
-       DEBUG_PRINTF("let_statement: assign %d to %d.\n", get_variable(var), var);
+      DEBUG_PRINTF("let_statement: assign %g to %d.\n", get_variable(var), var);
      }
      #endif
 	 accept(TOKENIZER_LF);
@@ -2231,7 +2307,7 @@ static void gosub_statement(void) {
     gosub_push(return_line);
     jump_linenum(target_line);
   } else {
-    DEBUG_PRINTF("gosub_statement: gosub stack exhausted.\n");
+    runtime_error("GS", "GOSUB stack overflow", current_line_number);
   }
 }
 /*---------------------------------------------------------------------------*/
@@ -2241,7 +2317,7 @@ static void return_statement(void){
     uint32_t retline = gosub_pop();
     jump_linenum(retline);
   } else {
-    DEBUG_PRINTF("return_statement: non-matching return.\n");
+    runtime_error("RS", "RETURN without GOSUB", current_line_number);
   }
 }
 /*---------------------------------------------------------------------------*/
@@ -2256,36 +2332,32 @@ static void rem_statement(void) {
 /*---------------------------------------------------------------------------*/
 static void next_statement(void){
   int var;
+  uint32_t line;
 
+  line = current_line_number;
   accept(TOKENIZER_NEXT);
   var = tokenizer_variable_num();
+  DEBUG_PRINTF("next_statement: next for variable %d.\n", var);
   accept(TOKENIZER_VARIABLE);
-  if(*for_depth_cell > 0 &&
-     var == (int)for_stack[*for_depth_cell - 1].for_variable_index) {
-    for_state top = for_stack[*for_depth_cell - 1];
-    VARIABLE_TYPE new_value = get_variable(var) + top.step;
-    set_variable(var, new_value);
-    
-    /* Check loop condition based on step direction */
-    int continue_loop;
-    if (top.step >= 0) {
-      continue_loop = (new_value <= top.to);
+  if(*for_depth_cell > 0) {
+    if(var == (int)for_stack[*for_depth_cell - 1].for_variable_index) {
+      DEBUG_PRINTF("next_statement: matching next for variable %d.\n", var);
+      for_state top = for_stack[*for_depth_cell - 1];
+      set_variable(var, get_variable(var) + 1);
+      if(get_variable(var) <= top.to) {
+        jump_linenum(top.line_after_for);
+      } else {
+        for_pop();
+        accept(TOKENIZER_LF);
+      }
     } else {
-      continue_loop = (new_value >= top.to);
-    }
-    
-    if(continue_loop) {
-      jump_linenum(top.line_after_for);
-    } else {
-      for_pop();
-      accept(TOKENIZER_LF);
+      DEBUG_PRINTF("next_statement: ERROR - non-matching next (expected %d, found %d).\n",
+          (int)for_stack[*for_depth_cell - 1].for_variable_index, var);
+      runtime_error("MN", "Non-matching NEXT", line);
     }
   } else {
-    if (*for_depth_cell > 0) {
-      DEBUG_PRINTF("next_statement: non-matching next (expected %d, found %d).\n",
-          (int)for_stack[*for_depth_cell - 1].for_variable_index, var);
-    }
-    accept(TOKENIZER_LF);
+    DEBUG_PRINTF("next_statement: ERROR - next without matching for.\n");
+    runtime_error("NF", "NEXT without FOR", line);
   }
 
 }
@@ -2312,7 +2384,13 @@ static void for_statement(void) {
   accept(TOKENIZER_LF);
 
   for_state st;
-  st.line_after_for = tokenizer_linenum();
+  if(tokenizer_token() == TOKENIZER_NUMBER) {
+    st.line_after_for = tokenizer_linenum();
+  } else {
+    DEBUG_PRINTF("for_statement: ERROR - Expected NUMBER token after LF, got %s\n",
+                 tokenizer_token_name(tokenizer_token()));
+    st.line_after_for = 0;
+  }
   st.for_variable_index = (int32_t)for_variable;
   st.to = (int32_t)to;
   st.step = (int32_t)step;
@@ -2448,6 +2526,11 @@ static void dim_statement(void) {
       ended = 1;
       return;
     }
+    if (v->strarr_offset != 0) {
+      DEBUG_PRINTF("dim_statement: String array already dimensioned.\n");
+      ended = 1;
+      return;
+    }
     
     /* Allocate string array descriptor */
     desc_offset = heap_alloc(sizeof(string_array_desc_t));
@@ -2500,6 +2583,11 @@ static void dim_statement(void) {
     v = find_or_create_variable(var_id, VARTYPE_ARRAY);
     if (v == NULL) {
       DEBUG_PRINTF("dim_statement: Failed to create variable.\n");
+      ended = 1;
+      return;
+    }
+    if (v->arr_offset != 0) {
+      DEBUG_PRINTF("dim_statement: Array already dimensioned.\n");
       ended = 1;
       return;
     }
@@ -2602,6 +2690,12 @@ static void statement(void){
   case TOKENIZER_END:
     end_statement();
     break;
+  case TOKENIZER_PUSH:
+    push_statement();
+    break;
+  case TOKENIZER_POP:
+    pop_statement();
+    break;
   case TOKENIZER_LET:
     accept(TOKENIZER_LET);
     /* Fall through. */
@@ -2616,18 +2710,20 @@ static void statement(void){
     break;
   default:
     DEBUG_PRINTF("statement: not implemented %d.\n", token);
-    exit(1);
+    runtime_error("TS", "Unsupported statement", current_line_number);
+    return;
   }
 }
 /*---------------------------------------------------------------------------*/
 static void line_statement(void){
   /* Save position before executing line for resume capability */
   save_position();
+  current_line_number = tokenizer_linenum();
   
   #if VERBOSE
-    DEBUG_PRINTF("----------- Line number %u ---------\n", tokenizer_linenum());
+    DEBUG_PRINTF("----------- Line number %u ---------\n", current_line_number);
   #endif
-  index_add(tokenizer_linenum(), tokenizer_pos());
+  index_add(current_line_number, tokenizer_pos());
   accept(TOKENIZER_NUMBER);
   statement();
 }
@@ -3010,6 +3106,7 @@ static uint32_t gosub_pop(void) {
   int32_t ptr = *gosub_depth_cell;
   if (ptr == 0) {
     DEBUG_PRINTF("gosub_pop: underflow (ptr=0)\n");
+    runtime_error("RS", "RETURN without GOSUB", current_line_number);
     return 0;
   }
   ptr--;
@@ -3021,6 +3118,7 @@ static void gosub_push(uint32_t line_num) {
   int32_t ptr = *gosub_depth_cell;
   if (ptr >= UBASIC_MAX_GOSUB_STACK_DEPTH) {
     DEBUG_PRINTF("gosub_push: overflow (ptr=%d)\n", (int)ptr);
+    runtime_error("GS", "GOSUB stack overflow", current_line_number);
     return;
   }
   gosub_stack_mem[ptr] = line_num;
@@ -3034,6 +3132,7 @@ static void for_push(for_state state) {
     *for_depth_cell = depth;
   } else {
     DEBUG_PRINTF("for_push: for stack depth exceeded.\n");
+    runtime_error("FS", "FOR stack overflow", current_line_number);
   }
 }
 /*---------------------------------------------------------------------------*/
@@ -3046,8 +3145,101 @@ static for_state for_pop(void) {
     return value;
   } else {
     DEBUG_PRINTF("for_pop: for stack underflow.\n");
+    runtime_error("FS", "FOR stack underflow", current_line_number);
     return error_state;
   }
+}
+/*---------------------------------------------------------------------------*/
+static void push_statement(void) {
+  int32_t depth;
+  push_entry entry;
+
+  accept(TOKENIZER_PUSH);
+
+  if (tokenizer_stringlookahead()) {
+    entry.type = 1;
+    entry.ival = 0;
+    strncpy(entry.sval, sexpr(), UBASIC_PUSH_STRING_LEN);
+    entry.sval[UBASIC_PUSH_STRING_LEN] = '\0';
+  } else {
+    entry.type = 0;
+    entry.ival = expr();
+    entry.sval[0] = '\0';
+  }
+  if(ended) return;
+  depth = *push_depth_cell;
+  if (depth < UBASIC_MAX_PUSH_STACK_DEPTH) {
+    push_stack_mem[depth++] = entry;
+    *push_depth_cell = depth;
+  } else {
+    runtime_error("PS", "PUSH stack overflow", current_line_number);
+    return;
+  }
+
+  accept(TOKENIZER_LF);
+}
+/*---------------------------------------------------------------------------*/
+static void pop_statement(void) {
+  int32_t depth;
+  int varnum;
+  int is_string;
+
+  accept(TOKENIZER_POP);
+
+  if (tokenizer_token() == TOKENIZER_STRINGVARIABLE) {
+    is_string = 1;
+    varnum = tokenizer_variable_num();
+    accept(TOKENIZER_STRINGVARIABLE);
+  } else if (tokenizer_token() == TOKENIZER_VARIABLE) {
+    is_string = 0;
+    varnum = tokenizer_variable_num();
+    accept(TOKENIZER_VARIABLE);
+  } else {
+    DEBUG_PRINTF("pop_statement: Expected variable after POP.\n");
+    runtime_error("TS", "POP requires variable target", current_line_number);
+    return;
+  }
+  if(ended) return;
+  depth = *push_depth_cell;
+  if (depth > 0) {
+    push_entry entry = push_stack_mem[--depth];
+    *push_depth_cell = depth;
+
+    if (is_string) {
+      if (entry.type != 1) {
+        runtime_error("PT", "POP type mismatch", current_line_number);
+        return;
+      }
+      set_stringvariable(varnum, entry.sval);
+    } else {
+      if (entry.type != 0) {
+        runtime_error("PT", "POP type mismatch", current_line_number);
+        return;
+      }
+      set_variable(varnum, entry.ival);
+    }
+  } else {
+    runtime_error("PS", "POP stack underflow", current_line_number);
+    return;
+  }
+
+  accept(TOKENIZER_LF);
+}
+/*---------------------------------------------------------------------------*/
+void ubasic_set_error_function(err_func func) {
+  error_function = func != NULL ? func : default_error_function;
+}
+/*---------------------------------------------------------------------------*/
+const char *ubasic_last_error_code(void) {
+  return last_error_code;
+}
+/*---------------------------------------------------------------------------*/
+const char *ubasic_last_error_description(void) {
+  return last_error_description;
+}
+/*---------------------------------------------------------------------------*/
+uint32_t ubasic_last_error_line(void) {
+  return last_error_line;
 }
 /*---------------------------------------------------------------------------*/
 
