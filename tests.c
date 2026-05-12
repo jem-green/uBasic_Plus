@@ -34,46 +34,48 @@
 #include <assert.h>
 #include "ubasic.h"
 
+#define MEMORY_SIZE 4096
+
 static const char program_let[] =
-"10 let a = 42\n\
-20 end\n";
+"10 LET a = 42\n\
+20 END\n";
 
 static const char program_goto[] =
-"10 goto 50\n\
-20 goto 40\n\
-30 goto 60\n\
-40 goto 30\n\
-50 goto 20\n\
-60 let c = 108\n\
-70 end\n";
+"10 GOTO 50\n\
+20 GOTO 40\n\
+30 GOTO 60\n\
+40 GOTO 30\n\
+50 GOTO 20\n\
+60 LET c = 108\n\
+70 END\n";
 
 static const char program_loop[] =
-"10 for i = 0 to 126\n\
-20 for j = 0 to 126\n\
-30 for k = 0 to 10\n\
-40 let a = i * j * k\n\
-rem 45 print a, i, j, k\n\
-50 next k\n\
-60 next j\n\
-70 next i\n\
-80 end\n";
+"10 FOR i = 0 TO 126\n\
+20 FOR j = 0 TO 126\n\
+30 FOR k = 0 TO 10\n\
+40 LET a = i * j * k\n\
+45 REM PRINT a, i, j, k\n\
+50 NEXT k\n\
+60 NEXT j\n\
+70 NEXT i\n\
+80 END\n";
 
 static const char program_fibs[] =
-"20 let a = 1\n\
-40 let b = 1\n\
-60 for i = 0 to 8\n\
-80 let b = a + b\n\
-100 let a = b - a\n\
-rem 120 print a, b\n\
-140 next i\n\
-160 end\n";
+"20 LET a = 1\n\
+40 LET b = 1\n\
+60 FOR i = 0 TO 8\n\
+80 LET b = a + b\n\
+100 LET a = b - a\n\
+120 REM PRINT a, b\n\
+140 NEXT i\n\
+160 END\n";
 
 static const char program_peek_poke[] =
-"10 peek 100 + 20 + 3, a\n\
-20 peek 123, z\n\
-30 poke 100 - 1, 99\n\
-40 poke 0, 0\n\
-50 end\n";
+"10 PEEK 100 + 20 + 3, a\n\
+20 PEEK 123, z\n\
+30 POKE 100 - 1, 99\n\
+40 POKE 0, 0\n\
+50 END\n";
 
 /*---------------------------------------------------------------------------*/
 VARIABLE_TYPE peek(VARIABLE_TYPE arg) {
@@ -88,6 +90,7 @@ void poke(VARIABLE_TYPE arg, VARIABLE_TYPE value) {
 /*---------------------------------------------------------------------------*/
 void run(const char program[]) {
   static int test_num = 0;
+  static uint8_t memory[MEMORY_SIZE];
   test_num++;
   printf("Running test #%u... ", test_num);
   fflush(stdout);
@@ -97,7 +100,8 @@ void run(const char program[]) {
 
   start_t = clock();
 
-  ubasic_init_peek_poke(program, &peek, &poke);
+  ubasic_init_peek_poke(memory, MEMORY_SIZE, &peek, &poke);
+  ubasic_load_program(program);
 
   do {
     ubasic_run();

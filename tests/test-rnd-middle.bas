@@ -1,0 +1,4 @@
+10 PRINT "Before"
+20 RANDOMIZE
+30 PRINT "After"
+40 END

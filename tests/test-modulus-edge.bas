@@ -1,0 +1,10 @@
+10 PRINT -7 % 3
+20 PRINT 7 % -3
+30 PRINT -7 % -3
+40 LET a = -10 % 4
+50 PRINT a
+60 LET b = 10 % -4
+70 PRINT b
+80 LET c = -10 % -4
+90 PRINT c
+100 END

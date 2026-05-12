@@ -1,81 +1,134 @@
 # uBasic Memory Layout (Byte Level)
 
-This document describes the active in-memory layout used by the interpreter.
+This document describes the exact in-memory layout used by the interpreter memory buffer.
 
 Source definitions:
-- ubasic.h constants and struct definitions
-- ubasic.c runtime placement in ubasic_init() and ubasic_load_program()
+- `ubasic.h` constants and struct definitions
+- `ubasic.c` runtime placement in `ubasic_load_program()`
 
 ## 1) Fixed low-memory control block
 
-These offsets are absolute from the start of the memory buffer (memory[0]).
+These offsets are absolute from the start of the provided memory buffer (`memory[0]`).
 
-- UBASIC_MEM_RESUME_OFFSET = 0
-  - bytes 0..3: int32_t resume_offset
-- UBASIC_MEM_GOSUB_DEPTH_OFFSET = 4
-  - bytes 4..7: int32_t gosub_depth
-- UBASIC_MEM_FOR_DEPTH_OFFSET = 8
-  - bytes 8..11: int32_t for_depth
-- UBASIC_MEM_DATA_PTR_OFFSET = 12
-  - bytes 12..15: int32_t data_ptr
-- UBASIC_MEM_GOSUB_STACK_OFFSET = 16
-  - bytes 16..55: int32_t gosub_stack[10]
-- UBASIC_MEM_FOR_STACK_OFFSET = 56
-  - bytes 56..119: for_state for_stack[4]
-- UBASIC_MEM_PUSH_DEPTH_OFFSET = 120
-  - bytes 120..123: int32_t push_depth
-- UBASIC_MEM_PUSH_STACK_OFFSET = 124
-  - bytes 124..(UBASIC_MEM_PROGRAM_OFFSET - 1): push_entry push_stack[16]
+- `UBASIC_MEM_RESUME_OFFSET = 0`
+  - bytes `0..3` (4 bytes): `int32_t resume_offset`
+- `UBASIC_MEM_GOSUB_DEPTH_OFFSET = 4`
+  - bytes `4..7` (4 bytes): `int32_t gosub_depth`
+- `UBASIC_MEM_FOR_DEPTH_OFFSET = 8`
+  - bytes `8..11` (4 bytes): `int32_t for_depth`
+- `UBASIC_MEM_GOSUB_STACK_OFFSET = 12`
+  - bytes `12..51` (40 bytes): `int32_t gosub_stack[10]`
+- `UBASIC_MEM_FOR_STACK_OFFSET = 52`
+  - bytes `52..99` (48 bytes): `for_state for_stack[4]`
 
-With current defaults on MSVC x64:
-- sizeof(for_state) = 16
-- sizeof(push_entry) = 56
-- UBASIC_MEM_PROGRAM_OFFSET = 1020
+With current `for_state` fields:
+- `uint32_t line_after_for` (4)
+- `int32_t for_variable_index` (4)
+- `int32_t to` (4)
 
-Note: UBASIC_MEM_PROGRAM_OFFSET is computed from sizeof(for_state) and sizeof(push_entry), so this value can vary by ABI/packing rules.
+So `sizeof(for_state) = 12`
 
-## 2) Program region
+- `UBASIC_MEM_PUSH_DEPTH_OFFSET = 100`
+  - bytes `100..103` (4 bytes): `int32_t push_depth`
+- `UBASIC_MEM_PUSH_STACK_OFFSET = 104`
+  - bytes `104..887` (784 bytes): `push_entry push_stack[16]`
 
-- Program bytes start at UBASIC_MEM_PROGRAM_OFFSET.
-- Program is NUL-terminated.
+With current `push_entry` fields:
+- `int32_t type` (4)
+- `VARIABLE_TYPE ival` (8, with current `double` default)
+- `char sval[41]` (41 bytes, where UBASIC_PUSH_STRING_LEN = 40)
 
-If program length is L bytes (excluding trailing NUL):
-- program_start = UBASIC_MEM_PROGRAM_OFFSET
-- program_end = UBASIC_MEM_PROGRAM_OFFSET + L + 1
+With natural alignment, `sizeof(push_entry) = 56` and:
+- `UBASIC_MEM_PROGRAM_OFFSET = 1000`
 
-## 3) Dynamic heap placement
+## 2) PUSH/POP stack region
 
-The interpreter uses a dynamic variable heap model.
+- `UBASIC_MEM_PUSH_DEPTH_OFFSET = 100`
+  - bytes `100..103` (4 bytes): `int32_t push_depth`
+- `UBASIC_MEM_PUSH_STACK_OFFSET = 104`
+  - bytes `104..999` (896 bytes): `push_entry push_stack[16]`
 
-At ubasic_load_program():
-- heap_state is placed at program_end.
-- var_desc_t table immediately follows heap_state.
-- var_count starts at 0 (descriptors are allocated on first use).
-- var_heap_top starts after the fixed descriptor table area.
-- str_pool_base starts at mem_capacity_bytes and grows downward.
+With `sizeof(push_entry) = 56`:
+- `UBASIC_MEM_PROGRAM_OFFSET = 1000`
 
-This means the free space between var_heap_top and str_pool_base is shared by:
-- dynamic variable/array/string descriptors and array data (grow upward)
-- string pool data (grows downward)
+## 3) Program region
 
-## 4) Key struct sizes (current)
+- Program starts at byte `1000`
+- Program is stored as text bytes plus trailing NULL
 
-- VARIABLE_TYPE = double
-- UBASIC_VARIABLE_COUNT = 26 * 11 = 286
-- sizeof(var_desc_t) = 11 (packed)
-- UBASIC_VAR_TABLE_BYTES = 286 * 11 = 3146
-- sizeof(heap_state_t) = 6 (packed)
+If program length is `L` bytes (not counting NULL), then:
+- Program occupies bytes `1000 .. (1000 + L)`
+- `program_end = 1000 + L + 1`
 
-## 5) Minimum memory requirement
+## 4) Numeric variable region
 
-Defined in ubasic.h:
+`VARIABLE_TYPE` is currently `double`.
 
-- UBASIC_MIN_MEMORY_BYTES = UBASIC_MEM_PROGRAM_OFFSET + 256 + UBASIC_HEAP_STATE_SIZE + UBASIC_VAR_TABLE_BYTES + 512
+- `sizeof(VARIABLE_TYPE) = 8`
+- `UBASIC_VARIABLE_COUNT = 26`
+- `UBASIC_VARIABLES_SIZE = 26 * 8 = 208`
 
-With current defaults (MSVC x64 values above):
+Variables are placed immediately after the NULL-terminated program:
+- `variables_offset = program_end`
+- Variable bytes: `variables_offset .. (variables_offset + 207)`
 
-- UBASIC_MIN_MEMORY_BYTES = 1020 + 256 + 6 + 3146 + 512 = 4940 bytes
+## 5) String state descriptor region
 
-## 6) Practical summary
+`ubasic_string_state_t` is packed (`#pragma pack(push, 1)`):
+- `uint16_t pool_base` (2 bytes)
+- `uint16_t pool_min` (2 bytes)
+- `uint16_t var_off[26]` (26 entries, 2 bytes each = 52 bytes)
 
-Low memory is fixed control state and stacks. Program text starts at UBASIC_MEM_PROGRAM_OFFSET. Heap metadata is placed right after the loaded program, and runtime allocations expand upward while the string pool expands downward from the top of the memory buffer.
+String-variable count in this table:
+- `26` string variables (`a$`..`z$`)
+- each `var_off[i]` stores one absolute offset into `memory[]`
+
+Total:
+- `UBASIC_STRING_STATE_SIZE = 56`
+
+Placed immediately after numeric variables:
+- `string_state_offset = variables_offset + 208`
+- `string_state_end = string_state_offset + 56`
+
+Descriptor byte range:
+- `string_state_offset .. (string_state_end - 1)`
+
+## 6) High-memory string pool (grows downward)
+
+At load time:
+- `pool_base = mem_capacity_bytes`
+- `pool_min = string_state_end`
+
+String data storage is absolute offsets into the same memory buffer.
+
+The pool grows downward from the top of memory toward `pool_min`.
+
+Usable string-pool bytes right after load:
+- `mem_capacity_bytes - string_state_end`
+
+## 7) Minimum required bytes
+
+From `UBASIC_MIN_MEMORY_BYTES`:
+
+- `UBASIC_MIN_MEMORY_BYTES = UBASIC_MEM_PROGRAM_OFFSET + 1 + UBASIC_HEAP_BYTES + UBASIC_VARIABLES_SIZE + UBASIC_STRING_STATE_SIZE`
+- With current defaults (`UBASIC_HEAP_BYTES = 0`):
+  - `UBASIC_MIN_MEMORY_BYTES = 1000 + 1 + 0 + 208 + 56 = 1265`
+
+This minimum allows an empty program (just trailing NULL), control data, numeric variables, string descriptors, and the PUSH/POP stack, with zero free string-pool capacity.
+
+## 8) Layout summary formula
+
+Given:
+- total memory capacity `M`
+- program text length `L`
+
+Then:
+- Fixed control block: bytes `0..99`
+- PUSH/POP stack: bytes `100..999`
+- Program+NUL: bytes `1000..(1000+L)`
+- Numeric vars: bytes `(1001+L)..(1208+L)`
+- String state: bytes `(1209+L)..(1264+L)`
+- String pool free area initially: bytes `(1265+L)..(M-1)` (used from top downward)
+
+Constraint for successful load:
+- `1265 + L <= M`

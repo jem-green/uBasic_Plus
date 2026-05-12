@@ -1,0 +1,3 @@
+10 DEF FNa(x)=5
+20 PRINT FNa(0)
+30 END

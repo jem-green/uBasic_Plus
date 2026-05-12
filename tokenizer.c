@@ -51,7 +51,7 @@
 
 static char const *ptr, *nextptr, *startptr;
 
-#define MAX_NUMLEN 10  /* Support uint32_t max: 4,294,967,295 */
+#define MAX_NUMLEN 32  // Max length for a double literal
 
 struct keyword_token {
   char *keyword;
@@ -85,29 +85,22 @@ static const struct keyword_token keywords[] = {
   {"ATN",                     TOKENIZER_ATN},
   {"EXP",                     TOKENIZER_EXP},
   {"LOG",                     TOKENIZER_LOG},
+    {"DEF",                     TOKENIZER_DEF},
+    {"FN",                      TOKENIZER_FN},
   {"AND",                     TOKENIZER_AND},
   {"OR",                      TOKENIZER_OR},
   {"MOD",                     TOKENIZER_MOD},
 // end of math functions
-  {"DEF",                     TOKENIZER_DEF},
-  {"FN",                      TOKENIZER_FN},
-  {"TAB",                     TOKENIZER_TAB},
-  {"CHANGE",                  TOKENIZER_CHANGE},
-  {"READ",                    TOKENIZER_READ},
-  {"DATA",                    TOKENIZER_DATA},
-  {"RESTORE",                 TOKENIZER_RESTORE},
  
-  {"DIM", TOKENIZER_DIM},
-  {"INPUT", TOKENIZER_INPUT},
+
   {"LET", TOKENIZER_LET},
   {"PRINT", TOKENIZER_PRINT},
   {"IF", TOKENIZER_IF},
   {"THEN", TOKENIZER_THEN},
+
   {"FOR", TOKENIZER_FOR},
   {"TO", TOKENIZER_TO},
-  {"STEP", TOKENIZER_STEP},
   {"NEXT", TOKENIZER_NEXT},
-  {"ON", TOKENIZER_ON},
   {"GOTO", TOKENIZER_GOTO},
   {"GOSUB", TOKENIZER_GOSUB},
   {"RETURN", TOKENIZER_RETURN},
@@ -117,16 +110,57 @@ static const struct keyword_token keywords[] = {
   {"END", TOKENIZER_END},
   {"PUSH", TOKENIZER_PUSH},
   {"POP", TOKENIZER_POP},
+  {"RANDOMIZE", TOKENIZER_RANDOMIZE},
   {NULL, TOKENIZER_ERROR}
 };
 
 static const struct keyword_token tokens[] = {
-	{"TOKENIZER_ERROR",TOKENIZER_ERROR},
+  {"TOKENIZER_ERROR",TOKENIZER_ERROR},
 	{"TOKENIZER_ENDOFINPUT",TOKENIZER_ENDOFINPUT},
 	{"TOKENIZER_NUMBER",TOKENIZER_NUMBER},
 	{"TOKENIZER_STRING",TOKENIZER_STRING},
 	{"TOKENIZER_VARIABLE",TOKENIZER_VARIABLE},
-	{"TOKENIZER_STRINGVARIABLE",TOKENIZER_STRINGVARIABLE},
+  {"TOKENIZER_LT",TOKENIZER_LT},
+  {"TOKENIZER_GT",TOKENIZER_GT},
+  {"TOKENIZER_EQ",TOKENIZER_EQ},
+  {"TOKENIZER_LTE",TOKENIZER_LTE},
+  {"TOKENIZER_GTE",TOKENIZER_GTE},
+  {"TOKENIZER_NE",TOKENIZER_NE},
+  {"TOKENIZER_LF",TOKENIZER_LF},
+  {"TOKENIZER_CR",TOKENIZER_CR},
+
+
+	{"TOKENIZER_LET",TOKENIZER_LET},
+	{"TOKENIZER_PRINT",TOKENIZER_PRINT},
+	{"TOKENIZER_IF",TOKENIZER_IF},
+	{"TOKENIZER_THEN",TOKENIZER_THEN},
+
+	{"TOKENIZER_FOR",TOKENIZER_FOR},
+	{"TOKENIZER_TO",TOKENIZER_TO},
+	{"TOKENIZER_NEXT",TOKENIZER_NEXT},
+	{"TOKENIZER_GOTO",TOKENIZER_GOTO},
+	{"TOKENIZER_GOSUB",TOKENIZER_GOSUB},
+	{"TOKENIZER_RETURN",TOKENIZER_RETURN},
+	{"TOKENIZER_REM",TOKENIZER_REM},
+	{"TOKENIZER_PEEK",TOKENIZER_PEEK},
+	{"TOKENIZER_POKE",TOKENIZER_POKE},
+	{"TOKENIZER_END",TOKENIZER_END},
+	{"TOKENIZER_PUSH",TOKENIZER_PUSH},
+	{"TOKENIZER_POP",TOKENIZER_POP},
+	{"TOKENIZER_COMMA",TOKENIZER_COMMA},
+	{"TOKENIZER_SEMICOLON",TOKENIZER_SEMICOLON},
+	{"TOKENIZER_PLUS",TOKENIZER_PLUS},
+	{"TOKENIZER_MINUS",TOKENIZER_MINUS},
+	{"TOKENIZER_AND",TOKENIZER_AND},
+	{"TOKENIZER_OR",TOKENIZER_OR},
+	{"TOKENIZER_ASTR",TOKENIZER_ASTR},
+	{"TOKENIZER_SLASH",TOKENIZER_SLASH},
+	{"TOKENIZER_MOD",TOKENIZER_MOD},
+	{"TOKENIZER_HASH",TOKENIZER_HASH},
+	{"TOKENIZER_LEFTPAREN",TOKENIZER_LEFTPAREN},
+	{"TOKENIZER_RIGHTPAREN",TOKENIZER_RIGHTPAREN},
+
+  {"TOKENIZER_STRINGVARIABLE",TOKENIZER_STRINGVARIABLE},
   {"TOKENIZER_PRINT$", TOKENIZER_PRINT$},
   {"TOKENIZER_LEFT$",TOKENIZER_LEFT$},
   {"TOKENIZER_RIGHT$",TOKENIZER_RIGHT$},
@@ -137,67 +171,10 @@ static const struct keyword_token tokens[] = {
   {"TOKENIZER_LEN",TOKENIZER_LEN},
   {"TOKENIZER_INSTR",TOKENIZER_INSTR},
   {"TOKENIZER_ASC",TOKENIZER_ASC},
-  {"TOKENIZER_ABS",TOKENIZER_ABS},
-  {"TOKENIZER_INT",TOKENIZER_INT},
-  {"TOKENIZER_SGN",TOKENIZER_SGN},
-  {"TOKENIZER_SQR",TOKENIZER_SQR},
-  {"TOKENIZER_RND",TOKENIZER_RND},
-  {"TOKENIZER_SIN",TOKENIZER_SIN},
-  {"TOKENIZER_COS",TOKENIZER_COS},
-  {"TOKENIZER_TAN",TOKENIZER_TAN},
-  {"TOKENIZER_ATN",TOKENIZER_ATN},
-  {"TOKENIZER_EXP",TOKENIZER_EXP},
-  {"TOKENIZER_LOG",TOKENIZER_LOG},
-  {"TOKENIZER_DEF",TOKENIZER_DEF},
-  {"TOKENIZER_FN",TOKENIZER_FN},
-  {"TOKENIZER_TAB",TOKENIZER_TAB},
-  {"TOKENIZER_CHANGE",TOKENIZER_CHANGE},
-  {"TOKENIZER_READ",TOKENIZER_READ},
-  {"TOKENIZER_DATA",TOKENIZER_DATA},
-  {"TOKENIZER_RESTORE",TOKENIZER_RESTORE},
-  {"TOKENIZER_DIM",TOKENIZER_DIM},
-  {"TOKENIZER_INPUT",TOKENIZER_INPUT},
-  {"TOKENIZER_LET",TOKENIZER_LET},
-  {"TOKENIZER_PRINT",TOKENIZER_PRINT},
-  {"TOKENIZER_IF",TOKENIZER_IF},
-  {"TOKENIZER_THEN",TOKENIZER_THEN},
-
-  {"TOKENIZER_FOR",TOKENIZER_FOR},
-  {"TOKENIZER_TO",TOKENIZER_TO},
-  {"TOKENIZER_STEP",TOKENIZER_STEP},
-  {"TOKENIZER_NEXT",TOKENIZER_NEXT},
-  {"TOKENIZER_ON",TOKENIZER_ON},
-  {"TOKENIZER_GOTO",TOKENIZER_GOTO},
-  {"TOKENIZER_GOSUB",TOKENIZER_GOSUB},
-  {"TOKENIZER_RETURN",TOKENIZER_RETURN},
-  {"TOKENIZER_REM",TOKENIZER_REM},
-  {"TOKENIZER_PEEK",TOKENIZER_PEEK},
-  {"TOKENIZER_POKE",TOKENIZER_POKE},
-  {"TOKENIZER_END",TOKENIZER_END},
-  {"TOKENIZER_PUSH",TOKENIZER_PUSH},
-  {"TOKENIZER_POP",TOKENIZER_POP},
-  {"TOKENIZER_COMMA",TOKENIZER_COMMA},
-  {"TOKENIZER_SEMICOLON",TOKENIZER_SEMICOLON},
-  {"TOKENIZER_PLUS",TOKENIZER_PLUS},
-  {"TOKENIZER_MINUS",TOKENIZER_MINUS},
-	{"TOKENIZER_AND",TOKENIZER_AND},
-	{"TOKENIZER_OR",TOKENIZER_OR},
-  {"TOKENIZER_ASTR",TOKENIZER_ASTR},
-  {"TOKENIZER_SLASH",TOKENIZER_SLASH},
-  {"TOKENIZER_MOD",TOKENIZER_MOD},
-  {"TOKENIZER_HASH",TOKENIZER_HASH},
-  {"TOKENIZER_LEFTPAREN",TOKENIZER_LEFTPAREN},
-  {"TOKENIZER_RIGHTPAREN",TOKENIZER_RIGHTPAREN},
-  {"TOKENIZER_LT",TOKENIZER_LT},
-  {"TOKENIZER_GT",TOKENIZER_GT},
-  {"TOKENIZER_EQ",TOKENIZER_EQ},
-  {"TOKENIZER_NE",TOKENIZER_NE},
-  {"TOKENIZER_LE",TOKENIZER_LE},
-  {"TOKENIZER_GE",TOKENIZER_GE},
-  {"TOKENIZER_POWER",TOKENIZER_POWER},
-  {"TOKENIZER_LF",TOKENIZER_LF},
-  {"TOKENIZER_CR",TOKENIZER_CR},
-
+    {"TOKENIZER_DEF",TOKENIZER_DEF},
+    {"TOKENIZER_FN",TOKENIZER_FN},
+  {"TOKENIZER_RANDOMIZE",TOKENIZER_RANDOMIZE},
+  {NULL, TOKENIZER_ERROR}
 };
 
 /*---------------------------------------------------------------------------*/
@@ -256,7 +233,7 @@ static int get_next_token(void) {
   }
 
   if(isdigit(*ptr) || (*ptr == '.' && isdigit(*(ptr+1)))) {
-    /* Use strtod to consume the full number including decimal point and E/e exponent */
+    /* Use strtod to consume the full number including optional E/e exponent */
     char *endp;
     strtod(ptr, &endp);
     if(endp > ptr) {
@@ -265,19 +242,7 @@ static int get_next_token(void) {
     }
     DEBUG_PRINTF("get_next_token: error parsing number.\n");
     return TOKENIZER_ERROR;
-  } else if(*ptr == '<' && (*(ptr + 1) == '=' || *(ptr + 1) == '>')) {
-    /* Two-character operators: <= or <> */
-    if(*(ptr + 1) == '=') {
-      nextptr = ptr + 2;
-      return TOKENIZER_LE;
-    } else {
-      nextptr = ptr + 2;
-      return TOKENIZER_NE;
-    }
-  } else if(*ptr == '>' && *(ptr + 1) == '=') {
-    /* Two-character operator: >= */
-    nextptr = ptr + 2;
-    return TOKENIZER_GE;  } else if(singlechar()) {
+  } else if(singlechar()) {
     nextptr = ptr + 1;
     return singlechar();
   } else if(*ptr == '"') {
@@ -297,20 +262,21 @@ static int get_next_token(void) {
   }
 
   if(*ptr >= 'a' && *ptr <= 'z') {
-    const char *vptr = ptr + 1;
 
-    if (isdigit((unsigned char)*vptr)) {
-      ++vptr;
+    /* Bare identifiers are single-letter variables (optionally $ or digit suffix).
+       Reject multi-letter lowercase identifiers like "fna" as syntax errors. */
+    if(*(ptr + 1) >= 'a' && *(ptr + 1) <= 'z') {
+      return TOKENIZER_ERROR;
     }
 
 // string addition
-    if (*vptr == '$') {
-       nextptr = vptr + 1;
+    if (*(ptr+1) == '$') {
+       nextptr = ptr + 2;
 	   return TOKENIZER_STRINGVARIABLE;
 	}
 // end of string addition
 
-    nextptr = vptr;
+    nextptr = ptr + 1;
     return TOKENIZER_VARIABLE;
   }
 
@@ -334,10 +300,16 @@ int tokenizer_stringlookahead(void) {
 	    si = si;
 	 else if (token == TOKENIZER_STRING)
 	    si = 1;
-	 else if (token >= TOKENIZER_STRINGVARIABLE && token <= TOKENIZER_CHR$)
+   else if (token == TOKENIZER_STRINGVARIABLE ||
+            token == TOKENIZER_PRINT$ ||
+            token == TOKENIZER_LEFT$ ||
+            token == TOKENIZER_RIGHT$ ||
+            token == TOKENIZER_MID$ ||
+            token == TOKENIZER_STR$ ||
+            token == TOKENIZER_CHR$)
 	    si = 1;
-	 else if (token > TOKENIZER_CHR$)
-	    si = 0; // numeric function
+   else
+      si = 0; // numeric function or any non-string token
      token = get_next_token();   
   }
   ptr = saveptr;
@@ -438,11 +410,7 @@ int tokenizer_finished(void) {
 /*---------------------------------------------------------------------------*/
 int tokenizer_variable_num(void) {
   if(*ptr >= 'a' && *ptr <= 'z') {
-    int varnum = (*ptr - 'a') * TOKENIZER_VARIABLE_INDEXES_PER_LETTER;
-    if (isdigit((unsigned char)*(ptr + 1))) {
-      varnum += (*(ptr + 1) - '0') + 1;
-    }
-    return varnum;
+    return *ptr - 'a';
   }
   return -1;
 }

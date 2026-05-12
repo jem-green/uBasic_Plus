@@ -1,0 +1,6 @@
+10 PRINT 7 % 3
+20 LET a = 10 % 4
+30 PRINT a
+40 LET b = 25 % 5
+50 PRINT b
+60 END

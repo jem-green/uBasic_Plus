@@ -1,0 +1,2 @@
+10 PRINT LOG(0)
+20 END

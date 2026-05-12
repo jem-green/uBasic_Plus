@@ -1,0 +1,2 @@
+10 PRINT 7 MOD 0
+20 END

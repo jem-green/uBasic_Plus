@@ -21,7 +21,6 @@ This document lists all runtime error codes emitted by the uBasic interpreter.
 | `OF` | Overflow | Fatal | Current line | Math overflow (currently `EXP`). Sets `ended = 1`. |
 | `TS` | Token syntax mismatch | Fatal | Current line | Parser token did not match expected grammar token. Sets `ended = 1`. |
 | `TS` | Unsupported statement | Fatal | Current line | Parser encountered unimplemented or invalid statement token. Sets `ended = 1`. |
-| `TS` | POP requires variable target | Fatal | Current line | POP was not followed by a numeric or string variable target. Sets `ended = 1`. |
 | `UL` | Undefined line target | Fatal | Calling line | GOTO or GOSUB references a line number that does not exist. Sets `ended = 1`. |
 
 ## Stack Limits

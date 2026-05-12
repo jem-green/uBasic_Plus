@@ -33,9 +33,17 @@
  * November 2008.
  * Changes and additions are marked 'string additions' throughout
  */
+
+  /*
+ * Modified to support floating point variables and math functions by Jeremy Green
+ * May 2026.
+ * Changes and additions are marked 'math additions' throughout
+ */
+
+
  
-#define DEBUG 1
-#define VERBOSE 1
+#define DEBUG 0
+#define VERBOSE 0
 
 #if DEBUG
 #define DEBUG_PRINTF(...)  printf(__VA_ARGS__)
@@ -53,6 +61,7 @@
 #include <stdint.h>
 /* math additions */
 #include <math.h>
+#include <time.h>
 /* end of math additions */
 
 // Probably private
@@ -62,10 +71,7 @@ typedef void (*poke_func)(VARIABLE_TYPE, VARIABLE_TYPE);
 static VARIABLE_TYPE expr(void);
 static void line_statement(void);
 static void statement(void);
-static void data_statement(void);
 static void def_statement(void);
-static void restore_statement(void);
-static void read_statement(void);
 static void index_free(void);
 static void reset_control_state(void);
 static VARIABLE_TYPE expr(void);
@@ -88,19 +94,24 @@ static size_t mem_capacity_bytes = 0;
 static int32_t *resume_offset_cell = NULL;
 static int32_t *gosub_depth_cell = NULL;
 static int32_t *for_depth_cell = NULL;
-static int32_t *data_ptr_cell = NULL;
 static int32_t *gosub_stack_mem = NULL;
 static for_state *for_stack = NULL;
+static VARIABLE_TYPE *variables_mem = NULL;
 static int32_t *push_depth_cell = NULL;
 static push_entry *push_stack_mem = NULL;
-static VARIABLE_TYPE *variables_mem = NULL;
-static heap_state_t *heap_state = NULL;
 
-/* DEF FN function table - max 26 functions (a-z) */
+typedef struct {
+  uint16_t param_var;      /* Parameter variable number (0..25) */
+  uint16_t expr_start;     /* Offset in program where expression starts */
+  uint16_t expr_end;       /* Offset in program where expression ends */
+  uint8_t defined;         /* 1 if function is defined */
+} fn_def_t;
+
 #define MAX_FN_DEFS 26
 static fn_def_t fn_table[MAX_FN_DEFS];
 
 // string additions
+static ubasic_string_state_t *string_state_mem = NULL;
 #define MAX_STRINGVARLEN UBASIC_STRING_VAR_MAXLEN
 #define MAX_BUFFERLEN    4000
 #if UBASIC_STRING_POOL_SIZE > MAX_BUFFERLEN
@@ -128,15 +139,21 @@ static VARIABLE_TYPE expr(void);
 static void line_statement(void);
 static void statement(void);
 
+static void randomize_statement(void);
 static void index_free(void);
 
 peek_func peek_function = NULL;
 poke_func poke_function = NULL;
 
-/* I/O function pointers matching C# wrapper API */
+/* I/O function pointer */
 static void default_out_function(const char *message) {
   printf("%s", message);
 }
+
+out_func out_function = default_out_function;  /* Default to printf wrapper */
+put_func put_function = NULL;
+in_func in_function = NULL;
+get_func get_function = NULL;
 
 /* Error handling function pointers and state */
 static void default_error_function(const char *code, const char *description, uint32_t line) {
@@ -146,36 +163,16 @@ static void default_error_function(const char *code, const char *description, ui
     fprintf(stderr, "%s %s\n", code, description);
   }
 }
-static void default_in_function(char *buffer, size_t max_len) {
-  if (fgets(buffer, (int)max_len, stdin) != NULL) {
-    /* Remove trailing newline if present */
-    size_t len = strlen(buffer);
-    if (len > 0 && buffer[len - 1] == '\n') {
-      buffer[len - 1] = '\0';
-    }
-  } else {
-    buffer[0] = '\0';
-  }
-}
 
 static err_func error_function = default_error_function;
 static char last_error_code[3] = "";
 static const char *last_error_description = "";
 static uint32_t last_error_line = 0;
 
-out_func out_function = default_out_function;  /* Default to printf wrapper */
-put_func put_function = NULL;
-in_func in_function = default_in_function;     /* Default to fgets wrapper */
-get_func get_function = NULL;
-
 // string additions
 static char nullstring[] = "\0"; 
 static void  var_init(void);
 static char* sexpr(void);
-static VARIABLE_TYPE get_array_element(int varnum, uint16_t idx1, uint16_t idx2, uint16_t idx3);
-static void set_array_element(int varnum, uint16_t idx1, uint16_t idx2, uint16_t idx3, VARIABLE_TYPE value);
-static char* get_stringarray_element(int varnum, uint16_t idx1, uint16_t idx2, uint16_t idx3);
-static void set_stringarray_element(int varnum, uint16_t idx1, uint16_t idx2, uint16_t idx3, const char* value);
 static char* scpy(const char *);
 static char* sconcat(const char *, const char *);
 static char* sleft(const char *, int); 
@@ -184,234 +181,33 @@ static char* smid(const char *, int, int);
 static char* sstr(VARIABLE_TYPE);
 static char* schr(int);
 static int sinstr(int, const char*, const char*);
+static ubasic_string_state_t *str_state(void);
+static char *str_pool_data(void);
 static void str_pool_compact(void);
-static var_desc_t *find_variable(uint16_t var_id, uint8_t type);
-static var_desc_t *find_or_create_variable(uint16_t var_id, uint8_t type);
-static uint16_t str_pool_alloc(uint16_t size);
 // end of string additions
-
-/*---------------------------------------------------------------------------*/
-// Heap management - 8-bit style dynamic allocation
-/*---------------------------------------------------------------------------*/
-static heap_state_t *get_heap_state(void) {
-  if (mem_base == NULL) return NULL;
-  return heap_state;
-}
-
-static var_desc_t *get_var_table(void) {
-  if (heap_state == NULL) return NULL;
-  /* Variable table starts right after heap_state */
-  return (var_desc_t *)((uint8_t *)heap_state + sizeof(heap_state_t));
-}
-
-static int varnum_is_valid(int varnum) {
-  return varnum >= 0 && varnum < UBASIC_VARIABLE_COUNT;
-}
-
-static int varnum_letter_index(int varnum) {
-  return varnum / UBASIC_VARIABLE_INDEXES_PER_LETTER;
-}
-
-static int varnum_suffix_digit(int varnum) {
-  int suffix = varnum % UBASIC_VARIABLE_INDEXES_PER_LETTER;
-  return (suffix == 0) ? -1 : (suffix - 1);
-}
-
-static var_desc_t *find_variable(uint16_t var_id, uint8_t type) {
-  var_desc_t *vartab;
-  uint16_t i;
-  
-  if (heap_state == NULL) return NULL;
-  vartab = get_var_table();
-  
-  #if DEBUG
-    DEBUG_PRINTF("find_variable: Looking for id=%u type %d, var_count=%u\n", (unsigned)var_id, type, (unsigned)heap_state->var_count);
-  #endif
-  
-  fflush(stderr);  /* Force output before loop */
-  for (i = 0; i < heap_state->var_count; i++) {
-    DEBUG_PRINTF("find_variable: Loop start, i=%u\n", (unsigned)i);
-    fflush(stderr);
-    #if DEBUG
-      DEBUG_PRINTF("find_variable: Checking var[%u] id=%u type=%d (expected id=%u type=%d)\n", 
-                   (unsigned)i, (unsigned)vartab[i].var_id, vartab[i].type, (unsigned)var_id, type);
-    #endif
-    fflush(stderr);
-    if (vartab[i].var_id == var_id && vartab[i].type == type) {
-      #if DEBUG
-        DEBUG_PRINTF("find_variable: Found id=%u type %d at index %u\n", (unsigned)var_id, type, (unsigned)i);
-      #endif
-      return &vartab[i];
-    }
-    DEBUG_PRINTF("find_variable: Loop end, i=%u\n", (unsigned)i);
-    fflush(stderr);
-  }
-  #if DEBUG
-    DEBUG_PRINTF("find_variable: id=%u type %d not found\n", (unsigned)var_id, type);
-  #endif
-  return NULL;
-}
-
-static var_desc_t *create_variable(uint16_t var_id, uint8_t type) {
-  var_desc_t *vartab;
-  var_desc_t *newvar;
-  uint16_t var_table_end;
-  
-  if (heap_state == NULL) {
-    DEBUG_PRINTF("create_variable: heap_state is NULL\n");
-    return NULL;
-  }
-  
-  vartab = get_var_table();
-
-  if (heap_state->var_count >= UBASIC_VARIABLE_COUNT) {
-    DEBUG_PRINTF("create_variable: Variable table full\n");
-    ended = 1;
-    return NULL;
-  }
-  
-  /* Variables are stored contiguously starting after heap_state */
-  /* Calculate where the variable table ends (NOT var_heap_top!) */
-  var_table_end = (uint16_t)((uint8_t*)heap_state - mem_base) + sizeof(heap_state_t) + 
-                  ((heap_state->var_count + 1) * sizeof(var_desc_t));
-  
-  /* Check if adding this variable would collide with string pool */
-  if (var_table_end >= heap_state->str_pool_base) {
-    DEBUG_PRINTF("create_variable: Out of memory (heap collision)\n");
-    ended = 1;
-    return NULL;
-  }
-  
-  /* Also check if it would collide with heap allocations */
-  if (var_table_end > heap_state->var_heap_top) {
-    /* Variable table is growing into allocated space, update var_heap_top */
-    heap_state->var_heap_top = var_table_end;
-  }
-  
-  /* New variable goes at the end of the variable table */
-  newvar = &vartab[heap_state->var_count];
-  
-  newvar->var_id = var_id;
-  newvar->type = type;
-  newvar->int_value = 0;  /* Initialize to zero */
-  
-  heap_state->var_count++;
-  
-  #if VERBOSE
-    DEBUG_PRINTF("create_variable: Created id=%u type %d at index %u (offset %u)\n",
-                 (unsigned)var_id, type, (unsigned)(heap_state->var_count - 1),
-                 (unsigned)((uint8_t*)newvar - mem_base));
-  #endif
-  
-  return newvar;
-}
-
-static var_desc_t *find_or_create_variable(uint16_t var_id, uint8_t type) {
-  var_desc_t *v = find_variable(var_id, type);
-  if (v != NULL) {
-    return v;
-  }
-  /* Create new variable */
-  return create_variable(var_id, type);
-}
-
-static uint16_t heap_alloc(uint16_t size) {
-  uint16_t offset;
-  uint16_t new_heap_top;
-  
-  if (heap_state == NULL) {
-    ended = 1;
-    return 0;
-  }
-  
-  new_heap_top = heap_state->var_heap_top + size;
-  if (new_heap_top >= heap_state->str_pool_base) {
-    DEBUG_PRINTF("heap_alloc: Out of memory (need %u bytes)\n", (unsigned)size);
-    ended = 1;
-    return 0;
-  }
-  
-  offset = heap_state->var_heap_top;
-  heap_state->var_heap_top = new_heap_top;
-  
-  return offset;
-}
-
-static uint16_t str_pool_alloc(uint16_t size) {
-  uint16_t new_pool_base;
-  
-  if (heap_state == NULL) {
-    ended = 1;
-    return 0;
-  }
-  
-  if (heap_state->str_pool_base < heap_state->var_heap_top + size) {
-    DEBUG_PRINTF("str_pool_alloc: Out of memory (need %u bytes)\n", (unsigned)size);
-    ended = 1;
-    return 0;
-  }
-  
-  DEBUG_PRINTF("str_pool_alloc: Before: pool_base=%u, requesting %u bytes\n",
-               (unsigned)heap_state->str_pool_base, (unsigned)size);
-  
-  new_pool_base = heap_state->str_pool_base - size;
-  heap_state->str_pool_base = new_pool_base;
-  
-  DEBUG_PRINTF("str_pool_alloc: After: pool_base=%u, returning %u\n",
-               (unsigned)heap_state->str_pool_base, (unsigned)new_pool_base);
-  
-  return new_pool_base;
-}
-
+/*
+ * Buffer passed to ubasic_init (see UBASIC_*_OFFSET in ubasic.h):
+ *   resume offset, gosub depth, for depth,
+ *   gosub stack[], for stack[], push depth, push stack[],
+ *   then NUL-terminated program.
+ */
 /*---------------------------------------------------------------------------*/
 // Public functions
 /*---------------------------------------------------------------------------*/
 void ubasic_init(uint8_t *memory, uint32_t memory_bytes) {
-  size_t heap_state_offset;
-  
   mem_base = memory;
   mem_capacity_bytes = memory_bytes;
   resume_offset_cell = (int32_t *)(memory + UBASIC_MEM_RESUME_OFFSET);
   gosub_depth_cell = (int32_t *)(memory + UBASIC_MEM_GOSUB_DEPTH_OFFSET);
   for_depth_cell = (int32_t *)(memory + UBASIC_MEM_FOR_DEPTH_OFFSET);
-  data_ptr_cell = (int32_t *)(memory + UBASIC_MEM_DATA_PTR_OFFSET);
   gosub_stack_mem = (int32_t *)(memory + UBASIC_MEM_GOSUB_STACK_OFFSET);
   for_stack = (for_state *)(memory + UBASIC_MEM_FOR_STACK_OFFSET);
   push_depth_cell = (int32_t *)(memory + UBASIC_MEM_PUSH_DEPTH_OFFSET);
   push_stack_mem = (push_entry *)(memory + UBASIC_MEM_PUSH_STACK_OFFSET);
   
-  /* Heap state immediately after program offset (program loaded later) */
-  heap_state_offset = UBASIC_MEM_PROGRAM_OFFSET + 1;
-  heap_state = (heap_state_t *)(memory + heap_state_offset);
-
-  if (heap_state_offset + UBASIC_HEAP_STATE_SIZE + UBASIC_VAR_TABLE_BYTES >= memory_bytes) {
-    DEBUG_PRINTF("ubasic_init: insufficient memory for variable table\n");
-    ended = 1;
-    return;
-  }
-  
-  /* Initialize heap - heap grows UP, string pool grows DOWN */
-  heap_state->var_heap_top = (uint16_t)(heap_state_offset + UBASIC_HEAP_STATE_SIZE + UBASIC_VAR_TABLE_BYTES);
-  heap_state->str_pool_base = (uint16_t)memory_bytes;
-  heap_state->var_count = 0;
-  
-  /* Initialize DEF FN table */
-  for (int i = 0; i < MAX_FN_DEFS; i++) {
-    fn_table[i].defined = 0;
-  }
-  
-  program_ptr = (char const *)(memory + UBASIC_MEM_PROGRAM_OFFSET);
-  memory[UBASIC_MEM_PROGRAM_OFFSET] = '\0';
-  *data_ptr_cell = 0;  /* Initialize DATA pointer to start of program */
-  index_free();
-  tokenizer_init(program_ptr);
-  
+  /* Don't initialize program_ptr, variables_mem, or string_state_mem - allows snapshot restore */
   #if VERBOSE
-    DEBUG_PRINTF("ubasic_init: Heap state at offset %zu\n", heap_state_offset);
-    DEBUG_PRINTF("ubasic_init: Var heap starts at %u, string pool at %u\n",
-                 (unsigned)heap_state->var_heap_top, (unsigned)heap_state->str_pool_base);
-    DEBUG_PRINTF("ubasic_init: Total dynamic space: %u bytes\n",
-                 (unsigned)(heap_state->str_pool_base - heap_state->var_heap_top));
+    DEBUG_PRINTF("ubasic_init: Base pointers set, ready for program load or snapshot restore.\n");
   #endif
 }
 /*---------------------------------------------------------------------------*/
@@ -438,24 +234,16 @@ static void reset_control_state(void) {
   if (for_depth_cell != NULL) {
     *for_depth_cell = 0;
   }
-  if (data_ptr_cell != NULL) {
-    *data_ptr_cell = 0;
-  }
-  if (push_depth_cell != NULL) {
-    *push_depth_cell = 0;
-  }
   if (gosub_stack_mem != NULL) {
     memset(gosub_stack_mem, 0, UBASIC_MAX_GOSUB_STACK_DEPTH * sizeof(int32_t));
   }
   if (for_stack != NULL) {
     memset(for_stack, 0, UBASIC_MAX_FOR_STACK_DEPTH * sizeof(for_state));
   }
-    if (push_depth_cell != NULL) {
+  if (push_depth_cell != NULL) {
     *push_depth_cell = 0;
   }
-  if (push_stack_mem != NULL) {
-    memset(push_stack_mem, 0, UBASIC_MAX_PUSH_STACK_DEPTH * sizeof(push_entry));
-  }
+  memset(fn_table, 0, sizeof(fn_table));
   last_error_code[0] = '\0';
   last_error_description = "";
   last_error_line = 0;
@@ -480,16 +268,11 @@ static void runtime_error(const char *code, const char *description, uint32_t li
 }
 /*---------------------------------------------------------------------------*/
 void ubasic_reset(void) {
-  index_free();
-  tokenizer_reset();
-  if (gosub_depth_cell != NULL) {
-    *gosub_depth_cell = 0;
+  reset_control_state();
+  /* Also clear variables on full reset */
+  if (variables_mem != NULL) {
+    memset(variables_mem, 0, UBASIC_VARIABLE_COUNT * sizeof(VARIABLE_TYPE));
   }
-  if (for_depth_cell != NULL) {
-    *for_depth_cell = 0;
-  }
-  ended = 0;
-
   #if VERBOSE
     DEBUG_PRINTF("ubasic_reset: Full reset including variables.\n");
   #endif
@@ -498,47 +281,68 @@ void ubasic_reset(void) {
 void ubasic_load_program(const char *program) {
   size_t len;
   size_t program_end;
-  size_t heap_state_offset;
+  size_t variables_offset;
+  size_t string_state_offset;
+  size_t string_state_end;
 
   if (mem_base == NULL) {
     DEBUG_PRINTF("ubasic_load_program: call ubasic_init first.\n");
     return;
   }
   
-  /* Reset control state but PRESERVE VARIABLES */
+  /* Reset control state */
   reset_control_state();
   
   len = strlen(program);
   program_end = UBASIC_MEM_PROGRAM_OFFSET + len + 1;
-  heap_state_offset = program_end;
   
-  /* Check program fits before heap state */
-  if (program_end + UBASIC_HEAP_STATE_SIZE + UBASIC_VAR_TABLE_BYTES >= mem_capacity_bytes) {
-    DEBUG_PRINTF("ubasic_load_program: program too large (%u bytes)\n", (unsigned)len);
-    return;
+  /* Variables placed immediately after program */
+  variables_offset = program_end;
+  
+  /* String state placed after variables */
+  string_state_offset = variables_offset + UBASIC_VARIABLES_SIZE;
+  string_state_end = string_state_offset + UBASIC_STRING_STATE_SIZE;
+  
+  /* Check total memory needed */
+  if (mem_capacity_bytes != 0) {
+    size_t total_needed = string_state_end + UBASIC_HEAP_BYTES;
+    if (total_needed > mem_capacity_bytes) {
+      DEBUG_PRINTF("ubasic_load_program: insufficient memory.\n");
+      return;
+    }
   }
   
   /* Load program */
   memcpy(mem_base + UBASIC_MEM_PROGRAM_OFFSET, program, len + 1);
   program_ptr = (char const *)(mem_base + UBASIC_MEM_PROGRAM_OFFSET);
-  *data_ptr_cell = 0;  /* Reset DATA pointer to start of new program */
+  
+  /* Place and clear variables right after program */
+  variables_mem = (VARIABLE_TYPE *)(mem_base + variables_offset);
+  memset(variables_mem, 0, UBASIC_VARIABLE_COUNT * sizeof(VARIABLE_TYPE));
+  
+  /* Place string state after variables */
+  string_state_mem = (ubasic_string_state_t *)(mem_base + string_state_offset);
+  
+  /* Reset string pool - it grows DOWN from HIGH memory toward string_state_end */
+  string_state_mem->pool_base = (uint16_t)mem_capacity_bytes;  /* Start at top */
+  string_state_mem->pool_min = (uint16_t)string_state_end;     /* Can't grow below string state */
+  memset(string_state_mem->var_off, 0, sizeof(string_state_mem->var_off));
+  
   tokenizer_init(program_ptr);
-  
-  /* Reset heap - position heap_state after program */
-  heap_state = (heap_state_t *)(mem_base + heap_state_offset);
-  heap_state->var_heap_top = (uint16_t)(heap_state_offset + UBASIC_HEAP_STATE_SIZE + UBASIC_VAR_TABLE_BYTES);
-  heap_state->str_pool_base = (uint16_t)mem_capacity_bytes;
-  heap_state->var_count = 0;
-  
   #if VERBOSE
-    DEBUG_PRINTF("ubasic_load_program: Loaded %u bytes\n", (unsigned)len);
-    DEBUG_PRINTF("ubasic_load_program: Heap reset, %u bytes available\n",
-                 (unsigned)(heap_state->str_pool_base - heap_state->var_heap_top));
+    DEBUG_PRINTF("ubasic_load_program: Loaded %u bytes, variables at offset %zu.\n", (unsigned)len, variables_offset);
+    DEBUG_PRINTF("ubasic_load_program: String state at offset %zu.\n", string_state_offset);
+    DEBUG_PRINTF("ubasic_load_program: String pool space: %zu bytes.\n", 
+                 (size_t)(mem_capacity_bytes - string_state_end));
   #endif
 }
 /*---------------------------------------------------------------------------*/
 int ubasic_finished(void){
   return ended || tokenizer_finished();
+}
+/*---------------------------------------------------------------------------*/
+VARIABLE_TYPE ubasic_get_variable(int varnum){
+  return get_variable(varnum);
 }
 /*---------------------------------------------------------------------------*/
 void ubasic_run(void){
@@ -596,8 +400,8 @@ void ubasic_resume(void) {
 static void accept(int token){
   if(token != tokenizer_token()) {
     DEBUG_PRINTF("accept: Token not what was expected (expected '%s', got %s).\n",
-    tokenizer_token_name(token),
-    tokenizer_token_name(tokenizer_token()));
+	tokenizer_token_name(token),
+	tokenizer_token_name(tokenizer_token()));
     runtime_error("TS", "Token syntax mismatch", current_line_number);
     return;
   }
@@ -607,113 +411,114 @@ static void accept(int token){
 /*---------------------------------------------------------------------------*/
 // string additions
 /*---------------------------------------------------------------------------*/
+static ubasic_string_state_t *str_state(void) {
+  return string_state_mem;
+}
+
+static char *str_pool_data(void) {
+  /* String pool is in the dynamic region, accessed via absolute offsets */
+  return (char *)mem_base;
+}
+
 static void str_pool_compact(void) {
-  /* Compact string pool - repack all string variables and string arrays */
-  var_desc_t *vartab;
-  uint16_t i, j;
-  uint16_t new_pool_base;
-  uint16_t temp_offset = 0;
-  
-  if (heap_state == NULL || mem_base == NULL) return;
-  
-  vartab = get_var_table();
-  new_pool_base = (uint16_t)mem_capacity_bytes;
-  
-  /* Copy all strings to scratch buffer and rebuild pool from top */
-  for (i = 0; i < heap_state->var_count; i++) {
-    if (vartab[i].type == VARTYPE_STRING && vartab[i].str_offset != 0) {
-      char *str_data = (char *)(mem_base + vartab[i].str_offset);
-      size_t len = strlen(str_data);
-      
-      if (len > 0 && len <= MAX_STRINGVARLEN) {
-        if (temp_offset + len + 1 > MAX_BUFFERLEN) {
-          ended = 1;
-          return;
-        }
-        memcpy(stringbuffer + temp_offset, str_data, len + 1);
-        temp_offset += (uint16_t)(len + 1);
-      }
-    } else if (vartab[i].type == VARTYPE_STRING_ARRAY && vartab[i].strarr_offset != 0) {
-      /* Handle string arrays - copy all non-null strings */
-      string_array_desc_t *arr_desc = (string_array_desc_t *)(mem_base + vartab[i].strarr_offset);
-      uint16_t *arr_data = (uint16_t *)(mem_base + arr_desc->data_offset);
-      uint16_t total_elements = arr_desc->dim_size[0] * arr_desc->dim_size[1] * arr_desc->dim_size[2];
-      
-      for (j = 0; j < total_elements; j++) {
-        if (arr_data[j] != 0) {
-          char *str_data = (char *)(mem_base + arr_data[j]);
-          size_t len = strlen(str_data);
-          
-          if (len > 0 && len <= MAX_STRINGVARLEN) {
-            if (temp_offset + len + 1 > MAX_BUFFERLEN) {
-              ended = 1;
-              return;
-            }
-            memcpy(stringbuffer + temp_offset, str_data, len + 1);
-            temp_offset += (uint16_t)(len + 1);
-          }
-        }
-      }
-    }
+  ubasic_string_state_t *h;
+  uint16_t old_off[UBASIC_VARIABLE_COUNT];
+  uint16_t old_base;
+  uint16_t string_state_offset;
+  uint16_t newpos;
+  int i;
+  size_t total_size;
+
+  if (mem_base == NULL) {
+    return;
+  }
+  h = str_state();
+  if (h == NULL) {
+    return;
   }
   
-  /* Rebuild string pool from top down */
-  temp_offset = 0;
-  for (i = 0; i < heap_state->var_count; i++) {
-    if (vartab[i].type == VARTYPE_STRING && vartab[i].str_offset != 0) {
-      char *src = stringbuffer + temp_offset;
-      size_t len = strlen(src);
-      
-      if (len > 0) {
-        new_pool_base -= (uint16_t)(len + 1);
-        memcpy(mem_base + new_pool_base, src, len + 1);
-        vartab[i].str_offset = new_pool_base;
-        temp_offset += (uint16_t)(len + 1);
-      } else {
-        vartab[i].str_offset = 0;
-      }
-    } else if (vartab[i].type == VARTYPE_STRING_ARRAY && vartab[i].strarr_offset != 0) {
-      /* Rebuild string array - reassign all string offsets */
-      string_array_desc_t *arr_desc = (string_array_desc_t *)(mem_base + vartab[i].strarr_offset);
-      uint16_t *arr_data = (uint16_t *)(mem_base + arr_desc->data_offset);
-      uint16_t total_elements = arr_desc->dim_size[0] * arr_desc->dim_size[1] * arr_desc->dim_size[2];
-      
-      for (j = 0; j < total_elements; j++) {
-        if (arr_data[j] != 0) {
-          char *src = stringbuffer + temp_offset;
-          size_t len = strlen(src);
-          
-          if (len > 0) {
-            new_pool_base -= (uint16_t)(len + 1);
-            memcpy(mem_base + new_pool_base, src, len + 1);
-            arr_data[j] = new_pool_base;
-            temp_offset += (uint16_t)(len + 1);
-          } else {
-            arr_data[j] = 0;
-          }
-        }
-      }
+  /* Calculate string state offset */
+  string_state_offset = (uint16_t)(mem_capacity_bytes - UBASIC_VARIABLES_SIZE - UBASIC_STRING_STATE_SIZE);
+  
+  /* Save old offsets and copy all active strings to scratch buffer */
+  memcpy(old_off, h->var_off, sizeof(old_off));
+  old_base = h->pool_base;
+  
+  /* Copy active string data to scratch buffer */
+  if (old_base < string_state_offset) {
+    size_t used = string_state_offset - old_base;
+    if (used > MAX_BUFFERLEN) {
+      ended = 1;
+      return;
     }
+    memcpy(stringbuffer, mem_base + old_base, used);
   }
   
-  heap_state->str_pool_base = new_pool_base;
+  /* Repack strings from TOP down (just below string_state) */
+  newpos = string_state_offset;
+  
+  for (i = 0; i < UBASIC_VARIABLE_COUNT; i++) {
+    uint16_t o = old_off[i];
+    const char *src;
+    size_t len;
+
+    if (o == 0) {
+      h->var_off[i] = 0;
+      continue;
+    }
+    
+    /* Validate old offset */
+    if (o < old_base || o >= string_state_offset) {
+      h->var_off[i] = 0;
+      continue;
+    }
+    
+    /* Get string from scratch buffer */
+    src = stringbuffer + (o - old_base);
+    len = strlen(src);
+    if (len > (size_t)MAX_STRINGVARLEN) {
+      len = (size_t)MAX_STRINGVARLEN;
+    }
+    
+    /* Check if we have space (growing down from newpos) */
+    if (newpos < h->pool_min + len + 1) {
+      DEBUG_PRINTF("str_pool_compact: Out of memory during compaction.\n");
+      ended = 1;
+      return;
+    }
+    
+    /* Allocate downward */
+    newpos -= (uint16_t)(len + 1);
+    memcpy(mem_base + newpos, src, len);
+    mem_base[newpos + len] = '\0';
+    h->var_off[i] = newpos;
+  }
+  
+  h->pool_base = newpos;
   
   #if VERBOSE
-    DEBUG_PRINTF("str_pool_compact: Compacted to %u bytes\n",
-                 (unsigned)(mem_capacity_bytes - new_pool_base));
+    DEBUG_PRINTF("str_pool_compact: Compacted strings, new base=%u, freed %u bytes.\n",
+                 (unsigned)newpos, (unsigned)(newpos - old_base));
   #endif
 }
 
 static void var_init() {
-  /* Reset heap completely */
-  freebufptr = 0;
-  
-  if (heap_state != NULL && mem_base != NULL) {
-    size_t heap_state_offset = (uint8_t *)heap_state - mem_base;
-    heap_state->var_heap_top = (uint16_t)(heap_state_offset + UBASIC_HEAP_STATE_SIZE + UBASIC_VAR_TABLE_BYTES);
-    heap_state->str_pool_base = (uint16_t)mem_capacity_bytes;
-    heap_state->var_count = 0;
-  }
+   int i;
+   ubasic_string_state_t *h;
+   size_t string_state_offset;
+
+   freebufptr = 0;
+   for (i=0; i<UBASIC_VARIABLE_COUNT; i++) 
+      set_variable(i, 0);
+   if (mem_base != NULL && mem_capacity_bytes > 0) {
+     h = str_state();
+     if (h != NULL) {
+       string_state_offset = mem_capacity_bytes - UBASIC_VARIABLES_SIZE - UBASIC_STRING_STATE_SIZE;
+       h->pool_base = (uint16_t)string_state_offset;
+       h->pool_min = UBASIC_MEM_PROGRAM_OFFSET + 1;
+       memset(h->var_off, 0, sizeof(h->var_off));
+     }
+   }
 }
 /*---------------------------------------------------------------------------*/
 static int string_space_check(int l) {
@@ -833,9 +638,9 @@ static char* smid(const char *s1, int l1, int l2) { // return the l2 chars of s1
 static char* sstr(VARIABLE_TYPE j) { // return the value j as a string
    int bp = freebufptr;
    int rp = bp;
-   if (string_space_check(10))
+   if (string_space_check(32))
       return nullstring;
-  sprintf((stringbuffer+bp),"%g",j);
+   sprintf((stringbuffer+bp),"%g",j);
    freebufptr = bp + strlen(stringbuffer+bp) + 1;
    return stringbuffer + rp;
 }
@@ -919,34 +724,9 @@ static char* sfactor() { // string form of factor
 		    j = 0;
 		 r = schr(j);
 		 break;
-	default:
-	      {
-	        int var = tokenizer_variable_num();
-	        uint16_t idx1 = 0, idx2 = 0, idx3 = 0;
-	        accept(TOKENIZER_STRINGVARIABLE);
-	        
-	        /* Check for array indexing */
-	        if (tokenizer_token() == TOKENIZER_LEFTPAREN) {
-	          accept(TOKENIZER_LEFTPAREN);
-	          idx1 = (uint16_t)expr();
-	          
-	          if (tokenizer_token() == TOKENIZER_COMMA) {
-	            accept(TOKENIZER_COMMA);
-	            idx2 = (uint16_t)expr();
-	            
-	            if (tokenizer_token() == TOKENIZER_COMMA) {
-	              accept(TOKENIZER_COMMA);
-	              idx3 = (uint16_t)expr();
-	            }
-	          }
-	          
-	          accept(TOKENIZER_RIGHTPAREN);
-	          r = get_stringarray_element(var, idx1, idx2, idx3);
-	        } else {
-	          r = get_stringvariable(var);
-	        }
-	      }
-	      break;
+	default:	  
+		  r = get_stringvariable(tokenizer_variable_num());
+	      accept(TOKENIZER_STRINGVARIABLE);
 	}
    return r;
 }
@@ -988,34 +768,9 @@ static int slogexpr() { // string logical expression
 /*---------------------------------------------------------------------------*/
 static VARIABLE_TYPE varfactor(void) {
   VARIABLE_TYPE r;
-  int var;
-  uint16_t idx1 = 0, idx2 = 0, idx3 = 0;
-  
-  var = tokenizer_variable_num();
-  DEBUG_PRINTF("varfactor: obtaining %g from variable %d.\n", get_variable(var), var);
+  DEBUG_PRINTF("varfactor: obtaining %g from variable %d.\n", get_variable(tokenizer_variable_num()), tokenizer_variable_num());
+  r = get_variable(tokenizer_variable_num());
   accept(TOKENIZER_VARIABLE);
-  
-  /* Check for array indexing */
-  if (tokenizer_token() == TOKENIZER_LEFTPAREN) {
-    accept(TOKENIZER_LEFTPAREN);
-    idx1 = (uint16_t)expr();
-    
-    if (tokenizer_token() == TOKENIZER_COMMA) {
-      accept(TOKENIZER_COMMA);
-      idx2 = (uint16_t)expr();
-      
-      if (tokenizer_token() == TOKENIZER_COMMA) {
-        accept(TOKENIZER_COMMA);
-        idx3 = (uint16_t)expr();
-      }
-    }
-    
-    accept(TOKENIZER_RIGHTPAREN);
-    r = get_array_element(var, idx1, idx2, idx3);
-  } else {
-    r = get_variable(var);
-  }
-  
   return r;
 }
 /*---------------------------------------------------------------------------*/
@@ -1033,7 +788,7 @@ static VARIABLE_TYPE factor(void) {
       break;  
     case TOKENIZER_VAL:
      accept(TOKENIZER_VAL);
-      r = strtod(sexpr(), NULL);
+     r = atoi(sexpr());
 	 break;
    case TOKENIZER_ASC:
     accept(TOKENIZER_ASC);
@@ -1057,8 +812,8 @@ static VARIABLE_TYPE factor(void) {
 	accept(TOKENIZER_RIGHTPAREN);
 	r = sinstr(j, s, s1);
 	break;	
- // end of string additions 
- // math functions
+ // end of string additions
+ /* math additions */
   case TOKENIZER_ABS:
     accept(TOKENIZER_ABS);
     accept(TOKENIZER_LEFTPAREN);
@@ -1142,90 +897,51 @@ static VARIABLE_TYPE factor(void) {
     r = log(r);
     break;
   case TOKENIZER_FN:
-    /* User-defined function */
     {
-      char func_letter;
       int func_index;
-      int arg_value;
-      int saved_param_value;
+      VARIABLE_TYPE arg_value;
+      VARIABLE_TYPE saved_param_value;
       int var_num;
       const char *saved_pos;
-      const char *fn_expr_start, *fn_expr_end;
-      
+      const char *fn_expr_start;
+
       accept(TOKENIZER_FN);
-      
-      /* Get function letter */
+
       if (tokenizer_token() != TOKENIZER_VARIABLE) {
-        DEBUG_PRINTF("factor: Expected function letter after FN.\n");
-        ended = 1;
-        r = 0;
-        break;
+        runtime_error("TS", "Expected function name after FN", current_line_number);
+        return 0;
       }
-      
-      /* Function names remain single-letter (a-z only). */
+
       var_num = tokenizer_variable_num();
-      if (!varnum_is_valid(var_num) || varnum_suffix_digit(var_num) >= 0) {
-        DEBUG_PRINTF("factor: Function name after FN must be a single letter.\n");
-        ended = 1;
-        r = 0;
-        break;
+      if (var_num < 0 || var_num >= MAX_FN_DEFS) {
+        runtime_error("TS", "Invalid FN function name", current_line_number);
+        return 0;
       }
-      func_letter = (char)('A' + varnum_letter_index(var_num));
-      
+      func_index = var_num;
       accept(TOKENIZER_VARIABLE);
-      
-      /* Check function is defined */
-      func_index = func_letter - 'A';
-      if (func_index < 0 || func_index >= MAX_FN_DEFS || !fn_table[func_index].defined) {
-        DEBUG_PRINTF("factor: FN%c is not defined.\n", func_letter);
-        ended = 1;
-        r = 0;
-        break;
+
+      if (!fn_table[func_index].defined) {
+        runtime_error("TS", "FN function not defined", current_line_number);
+        return 0;
       }
-      
+
       accept(TOKENIZER_LEFTPAREN);
-      
-      /* Evaluate argument */
       arg_value = expr();
-      
       accept(TOKENIZER_RIGHTPAREN);
-      
-      /* Save current parameter variable value */
+
       saved_param_value = get_variable(fn_table[func_index].param_var);
-      
-      /* Set parameter to argument value */
       set_variable(fn_table[func_index].param_var, arg_value);
-      
-      #if DEBUG
-         DEBUG_PRINTF("factor: Set param var %d to %g (was %g)\n",
-           fn_table[func_index].param_var, (double)arg_value, (double)saved_param_value);
-      #endif
-      
-      /* Save current tokenizer position */
+
       saved_pos = tokenizer_pos();
-      
-      /* Jump to function expression */
       fn_expr_start = program_ptr + fn_table[func_index].expr_start;
-      fn_expr_end = program_ptr + fn_table[func_index].expr_end;
-      
       tokenizer_goto(fn_expr_start);
-      
-      /* Evaluate function expression */
       r = expr();
-      
-      /* Restore parameter variable */
       set_variable(fn_table[func_index].param_var, saved_param_value);
-      
-      /* Restore tokenizer position */
       tokenizer_goto(saved_pos);
-      
-      #if DEBUG
-        DEBUG_PRINTF("factor: FN%c(%g) = %g\n", func_letter, (double)arg_value, (double)r);
-      #endif
     }
     break;
- // end of math functions
-	 
+  /* end of math additions */
+
   case TOKENIZER_NUMBER:
     r = tokenizer_num();
     DEBUG_PRINTF("factor: number %g.\n", r);
@@ -1271,7 +987,7 @@ static VARIABLE_TYPE term(void) {
      op == TOKENIZER_MOD) {
      tokenizer_next();
      f2 = factor();
-    DEBUG_PRINTF("term: %g %d %g\n", f1, op, f2); // op is int, f1/f2 are double
+     DEBUG_PRINTF("term: %g %d %g\n", f1, op, f2);
      switch(op) {
        case TOKENIZER_ASTR:
         f1 = f1 * f2;
@@ -1324,7 +1040,7 @@ static VARIABLE_TYPE expr(void){
        op == TOKENIZER_MINUS) {
     tokenizer_next();
     t2 = term();
-    DEBUG_PRINTF("expr: %g %d %g.\n", t1, op, t2); // op is int, t1/t2 are double
+    DEBUG_PRINTF("expr: %g %d %g.\n", t1, op, t2);
     switch(op) {
     case TOKENIZER_PLUS:
       t1 = t1 + t2;
@@ -1346,15 +1062,12 @@ static int relation(void){
   r1 = expr();
   op = tokenizer_token();
   DEBUG_PRINTF("relation: token %d.\n", op);
-  while(op == TOKENIZER_LT ||
-       op == TOKENIZER_GT ||
-       op == TOKENIZER_EQ ||
-       op == TOKENIZER_NE ||
-       op == TOKENIZER_LE ||
-       op == TOKENIZER_GE) {
+  if(op == TOKENIZER_LT ||
+     op == TOKENIZER_GT ||
+     op == TOKENIZER_EQ) {
     tokenizer_next();
     r2 = expr();
-    DEBUG_PRINTF("relation: %g %d %g.\n", r1, op, r2); // r1/r2 are double, op is int
+    DEBUG_PRINTF("relation: %g %d %g.\n", r1, op, r2);
     switch(op) {
     case TOKENIZER_LT:
       r1 = r1 < r2;
@@ -1365,14 +1078,20 @@ static int relation(void){
     case TOKENIZER_EQ:
       r1 = r1 == r2;
       break;
-    case TOKENIZER_NE:
-      r1 = r1 != r2;
+    }
+  }
+  op = tokenizer_token();
+  while(op == TOKENIZER_AND ||
+        op == TOKENIZER_OR) {
+    tokenizer_next();
+    r2 = relation();
+    DEBUG_PRINTF("relation: %g %d %g.\n", r1, op, r2);
+    switch(op) {
+    case TOKENIZER_AND:
+      r1 = r1 && r2;
       break;
-    case TOKENIZER_LE:
-      r1 = r1 <= r2;
-      break;
-    case TOKENIZER_GE:
-      r1 = r1 >= r2;
+    case TOKENIZER_OR:
+      r1 = r1 || r2;
       break;
     }
     op = tokenizer_token();
@@ -1496,670 +1215,57 @@ static void goto_statement(void) {
   jump_linenum(tokenizer_linenum());
 }
 /*---------------------------------------------------------------------------*/
-static void on_statement(void) {
-  int index;
-  int line_numbers[20];
-  int count = 0;
-  int is_gosub;
-  
-  accept(TOKENIZER_ON);
-  
-  /* Evaluate expression to get index (1-based) */
-  index = expr();
-  
-  /* Determine if GOTO or GOSUB */
-  if (tokenizer_token() == TOKENIZER_GOTO) {
-    accept(TOKENIZER_GOTO);
-    is_gosub = 0;
-  } else if (tokenizer_token() == TOKENIZER_GOSUB) {
-    accept(TOKENIZER_GOSUB);
-    is_gosub = 1;
-  } else {
-    DEBUG_PRINTF("on_statement: Expected GOTO or GOSUB.\n");
-    ended = 1;
-    return;
-  }
-  
-  /* Parse comma-separated list of line numbers */
-  while (count < 20 && tokenizer_token() == TOKENIZER_NUMBER) {
-    line_numbers[count] = tokenizer_linenum();
-    count++;
-    accept(TOKENIZER_NUMBER);
-    
-    if (tokenizer_token() == TOKENIZER_COMMA) {
-      accept(TOKENIZER_COMMA);
-    } else {
-      break;
-    }
-  }
-  
-  accept(TOKENIZER_LF);
-  
-  /* Execute if index is in valid range (1-based) */
-  if (index >= 1 && index <= count) {
-    uint32_t target_line = line_numbers[index - 1];
-    
-    if (is_gosub) {
-      /* GOSUB: push return address and jump */
-      if (*gosub_depth_cell < UBASIC_MAX_GOSUB_STACK_DEPTH) {
-        gosub_push(tokenizer_linenum());
-        jump_linenum(target_line);
-      } else {
-        DEBUG_PRINTF("on_statement: gosub stack exhausted.\n");
-      }
-    } else {
-      /* GOTO: just jump */
-      jump_linenum(target_line);
-    }
-  }
-  /* If index out of range, continue to next statement (do nothing) */
-  
-  DEBUG_PRINTF("on_statement: index=%d, count=%d, is_gosub=%d\n", index, count, is_gosub);
-}
-/*---------------------------------------------------------------------------*/
 static void print_statement(void) {
-  // string additions
+  // string additions - buffer for complete line
   static char buf[128];
+  int buf_remain;
   buf[0]=0;
+  buf_remain = sizeof(buf) - 1;
   // end of string additions
   accept(TOKENIZER_PRINT);
   DEBUG_PRINTF("print_statement: Loop.\n");
-  
-  // EBNF: "PRINT" list , { ("," | ";") , list }
-  // list = string | variable | expression | tab_function
-  
-  // Process first list item if present (PRINT alone is valid for blank line)
-  if(tokenizer_token() != TOKENIZER_LF && 
-     tokenizer_token() != TOKENIZER_ENDOFINPUT &&
-     tokenizer_token() != TOKENIZER_CR) {
-    
-    // Process list item
+  do {
     if(tokenizer_token() == TOKENIZER_STRING) {
       tokenizer_string(string, sizeof(string));
-      sprintf(buf+strlen(buf), "%s", string);
+      int used = snprintf(buf+strlen(buf), buf_remain, "%s", string);
+      buf_remain -= used;
       tokenizer_next();
-    } else if(tokenizer_token() == TOKENIZER_TAB) {
+    } else if(tokenizer_token() == TOKENIZER_COMMA) {
+      int used = snprintf(buf+strlen(buf), buf_remain, "%s", " ");
+      buf_remain -= used;
       tokenizer_next();
-      accept(TOKENIZER_LEFTPAREN);
-      int target_col = expr();
-      accept(TOKENIZER_RIGHTPAREN);
-      int current_col = strlen(buf);
-      if (target_col > current_col && target_col < sizeof(buf)) {
-        memset(buf + current_col, ' ', target_col - current_col);
-        buf[target_col] = '\0';
-      }
+    } else if(tokenizer_token() == TOKENIZER_SEMICOLON) {
+      tokenizer_next();
+    } else if(tokenizer_token() == TOKENIZER_VARIABLE ||
+      tokenizer_token() == TOKENIZER_NUMBER) {
+      int used = snprintf(buf+strlen(buf), buf_remain, "%g", expr());
+      buf_remain -= used;
+	} else if (tokenizer_token() == TOKENIZER_CR){
+		tokenizer_next();
     } else {
-      // variable or expression (or string expression)
+	  // string additions
       if (tokenizer_stringlookahead()) {
-        sprintf(buf+strlen(buf), "%s", sexpr());
+          int used = snprintf(buf+strlen(buf), buf_remain, "%s", sexpr());
+          buf_remain -= used;
       } else {
-        sprintf(buf+strlen(buf), "%g", expr());
-      }
+         int used = snprintf(buf+strlen(buf), buf_remain, "%g", expr());
+         buf_remain -= used;
+	  }
+    if (ended) {
+      return;
     }
-    
-    // Process { ("," | ";") , list }
-    while(tokenizer_token() == TOKENIZER_COMMA || 
-          tokenizer_token() == TOKENIZER_SEMICOLON) {
-      
-      // Process separator
-      if(tokenizer_token() == TOKENIZER_COMMA) {
-        int current_col = strlen(buf);
-        int next_zone = ((current_col / UBASIC_PRINT_ZONE_WIDTH) + 1) * UBASIC_PRINT_ZONE_WIDTH;
-        if (next_zone < sizeof(buf)) {
-          memset(buf + current_col, ' ', next_zone - current_col);
-          buf[next_zone] = '\0';
-        }
-        tokenizer_next();
-      } else { // TOKENIZER_SEMICOLON
-        tokenizer_next();
-      }
-      
-      // After separator, process list item (required by EBNF)
-      if(tokenizer_token() == TOKENIZER_STRING) {
-        tokenizer_string(string, sizeof(string));
-        sprintf(buf+strlen(buf), "%s", string);
-        tokenizer_next();
-      } else if(tokenizer_token() == TOKENIZER_TAB) {
-        tokenizer_next();
-        accept(TOKENIZER_LEFTPAREN);
-        int target_col = expr();
-        accept(TOKENIZER_RIGHTPAREN);
-        int current_col = strlen(buf);
-        if (target_col > current_col && target_col < sizeof(buf)) {
-          memset(buf + current_col, ' ', target_col - current_col);
-          buf[target_col] = '\0';
-        }
-      } else if(tokenizer_token() == TOKENIZER_LF || 
-                tokenizer_token() == TOKENIZER_ENDOFINPUT ||
-                tokenizer_token() == TOKENIZER_CR) {
-        // Trailing separator - valid in BASIC, just ends the line
-        break;
-      } else {
-        // variable or expression (or string expression)
-        if (tokenizer_stringlookahead()) {
-          sprintf(buf+strlen(buf), "%s", sexpr());
-        } else {
-          sprintf(buf+strlen(buf), "%g", expr());
-        }
-      }
+	  // end of string additions
+	  continue;
     }
+  if (ended) {
+    return;
   }
-  
-  // Handle CR if present
-  if(tokenizer_token() == TOKENIZER_CR) {
-    tokenizer_next();
-  }
-  
+  } while(tokenizer_token() != TOKENIZER_LF &&
+	  tokenizer_token() != TOKENIZER_ENDOFINPUT);
   out_function(buf);
   out_function("\n");
   DEBUG_PRINTF("print_statement: End of print.\n");
   tokenizer_next();
-}
-/*---------------------------------------------------------------------------*/
-static void input_statement(void) {
-  static char input_buf[256];
-  char *input_ptr;
-  char *token_start;
-  int var;
-  int is_string;
-  int has_prompt = 0;
-  
-  accept(TOKENIZER_INPUT);
-  
-  /* Check for optional prompt string */
-  if (tokenizer_token() == TOKENIZER_STRING) {
-    tokenizer_string(string, sizeof(string));
-    out_function(string);
-    has_prompt = 1;
-    accept(TOKENIZER_STRING);
-    
-    /* Prompt can be followed by semicolon or comma */
-    if (tokenizer_token() == TOKENIZER_SEMICOLON) {
-      accept(TOKENIZER_SEMICOLON);
-    } else if (tokenizer_token() == TOKENIZER_COMMA) {
-      accept(TOKENIZER_COMMA);
-    }
-    
-    /* Always add ? prompt after custom prompt */
-    out_function("? ");
-  } else {
-    /* Show default prompt if no custom prompt */
-    out_function("? ");
-  }
-  
-  /* Read input line */
-  in_function(input_buf, sizeof(input_buf));
-  input_ptr = input_buf;
-  
-  DEBUG_PRINTF("input_statement: Read input '%s'\n", input_buf);
-  
-  /* Parse variables and assign values */
-  do {
-    /* Determine variable type */
-    if (tokenizer_token() == TOKENIZER_VARIABLE) {
-      var = tokenizer_variable_num();
-      is_string = 0;
-      accept(TOKENIZER_VARIABLE);
-    } else if (tokenizer_token() == TOKENIZER_STRINGVARIABLE) {
-      var = tokenizer_variable_num();
-      is_string = 1;
-      accept(TOKENIZER_STRINGVARIABLE);
-    } else {
-      DEBUG_PRINTF("input_statement: Expected variable.\n");
-      ended = 1;
-      return;
-    }
-    
-    /* Skip leading whitespace in input */
-    while (*input_ptr == ' ' || *input_ptr == '\t') {
-      input_ptr++;
-    }
-    
-    /* Parse value from input */
-    if (is_string) {
-      /* String variable - read until comma or end */
-      token_start = input_ptr;
-      while (*input_ptr != ',' && *input_ptr != '\0') {
-        input_ptr++;
-      }
-      
-      /* Copy string value */
-      if (input_ptr > token_start) {
-        size_t len = input_ptr - token_start;
-        if (len > MAX_STRINGVARLEN) {
-          len = MAX_STRINGVARLEN;
-        }
-        memcpy(string, token_start, len);
-        string[len] = '\0';
-        
-        /* Trim trailing whitespace */
-        while (len > 0 && (string[len-1] == ' ' || string[len-1] == '\t')) {
-          len--;
-          string[len] = '\0';
-        }
-        
-        set_stringvariable(var, string);
-      } else {
-        set_stringvariable(var, "");
-      }
-    } else {
-      /* Numeric variable */
-      VARIABLE_TYPE value;
-      value = strtod(input_ptr, &input_ptr);
-      set_variable(var, value);
-    }
-    
-    /* Skip comma in input if present */
-    if (*input_ptr == ',') {
-      input_ptr++;
-    }
-    
-    /* Check for more variables */
-    if (tokenizer_token() == TOKENIZER_COMMA) {
-      accept(TOKENIZER_COMMA);
-    } else {
-      break;
-    }
-  } while (tokenizer_token() != TOKENIZER_LF && 
-           tokenizer_token() != TOKENIZER_ENDOFINPUT);
-  
-  accept(TOKENIZER_LF);
-  DEBUG_PRINTF("input_statement: Input complete.\n");
-}
-/*---------------------------------------------------------------------------*/
-static void change_statement(void){
-  /* CHANGE statement - dropped in Dartmouth BASIC v5
-   * Syntax: CHANGE string_var TO numeric_var
-   *     or: CHANGE numeric_var TO string_var
-   * This statement is recognized but not implemented.
-   */
-  accept(TOKENIZER_CHANGE);
-  
-  /* Parse the first variable (either string or numeric) */
-  if (tokenizer_token() == TOKENIZER_STRINGVARIABLE) {
-    accept(TOKENIZER_STRINGVARIABLE);
-  } else if (tokenizer_token() == TOKENIZER_VARIABLE) {
-    accept(TOKENIZER_VARIABLE);
-    /* Handle potential array indexing */
-    if (tokenizer_token() == TOKENIZER_LEFTPAREN) {
-      accept(TOKENIZER_LEFTPAREN);
-      expr();
-      if (tokenizer_token() == TOKENIZER_COMMA) {
-        accept(TOKENIZER_COMMA);
-        expr();
-      }
-      accept(TOKENIZER_RIGHTPAREN);
-    }
-  } else {
-    DEBUG_PRINTF("change_statement: Expected variable\n");
-    exit(1);
-  }
-  
-  /* Accept TO keyword */
-  accept(TOKENIZER_TO);
-  
-  /* Parse the second variable (either string or numeric) */
-  if (tokenizer_token() == TOKENIZER_STRINGVARIABLE) {
-    accept(TOKENIZER_STRINGVARIABLE);
-  } else if (tokenizer_token() == TOKENIZER_VARIABLE) {
-    accept(TOKENIZER_VARIABLE);
-    /* Handle potential array indexing */
-    if (tokenizer_token() == TOKENIZER_LEFTPAREN) {
-      accept(TOKENIZER_LEFTPAREN);
-      expr();
-      if (tokenizer_token() == TOKENIZER_COMMA) {
-        accept(TOKENIZER_COMMA);
-        expr();
-      }
-      accept(TOKENIZER_RIGHTPAREN);
-    }
-  } else {
-    DEBUG_PRINTF("change_statement: Expected variable\n");
-    exit(1);
-  }
-  
-  accept(TOKENIZER_LF);
-  
-  /* CHANGE is not implemented - was dropped in Dartmouth BASIC v5 */
-  DEBUG_PRINTF("CHANGE statement not implemented (dropped in Dartmouth BASIC v5)\n");
-  exit(1);
-}
-/*---------------------------------------------------------------------------*/
-static void data_statement(void){
-  /* DATA statement - skip during normal execution */
-  accept(TOKENIZER_DATA);
-  DEBUG_PRINTF("data_statement: Skipping DATA.\n");
-  tokenizer_skip();
-}
-/*---------------------------------------------------------------------------*/
-static void restore_statement(void){
-  /* RESTORE statement - reset DATA pointer to start of program */
-  accept(TOKENIZER_RESTORE);
-  accept(TOKENIZER_LF);
-  
-  *data_ptr_cell = 0;  /* Reset to program start */
-  DEBUG_PRINTF("restore_statement: DATA pointer reset to start.\n");
-}
-/*---------------------------------------------------------------------------*/
-static void def_statement(void){
-  /* DEF FN statement - define a user function
-   * Syntax: DEF FN letter(variable) = expression
-   */
-  char func_letter;
-  int param_var;
-  int fn_var_num;
-  const char *expr_start_ptr, *expr_end_ptr;
-  uint16_t expr_start_offset, expr_end_offset;
-  int func_index;
-  
-  accept(TOKENIZER_DEF);
-  accept(TOKENIZER_FN);
-  
-  /* Get function letter (A-Z) - tokenizer sees it as a variable */
-  #if DEBUG
-    DEBUG_PRINTF("def_statement: Next token is '%s'\n", tokenizer_token_name(tokenizer_token()));
-  #endif
-  
-  if (tokenizer_token() != TOKENIZER_VARIABLE) {
-    DEBUG_PRINTF("def_statement: Expected function letter after FN.\n");
-    ended = 1;
-    return;
-  }
-  
-  /* Function names remain single-letter (a-z only). */
-  fn_var_num = tokenizer_variable_num();
-  if (!varnum_is_valid(fn_var_num) || varnum_suffix_digit(fn_var_num) >= 0) {
-    DEBUG_PRINTF("def_statement: Function letter must be single-letter a-z.\n");
-    ended = 1;
-    return;
-  }
-  func_letter = (char)('A' + varnum_letter_index(fn_var_num));
-  
-  #if DEBUG
-    DEBUG_PRINTF("def_statement: Function letter = '%c' (var_num=%d)\n", 
-                 func_letter, fn_var_num);
-  #endif
-  
-  accept(TOKENIZER_VARIABLE);
-  
-  /* Function letter must be A-Z */
-  if (func_letter < 'A' || func_letter > 'Z') {
-    DEBUG_PRINTF("def_statement: Function letter must be A-Z.\n");
-    ended = 1;
-    return;
-  }
-  
-  accept(TOKENIZER_LEFTPAREN);
-  
-  /* Get parameter variable */
-  if (tokenizer_token() != TOKENIZER_VARIABLE) {
-    DEBUG_PRINTF("def_statement: Expected parameter variable.\n");
-    ended = 1;
-    return;
-  }
-  param_var = tokenizer_variable_num();
-  if (!varnum_is_valid(param_var)) {
-    DEBUG_PRINTF("def_statement: Invalid parameter variable.\n");
-    ended = 1;
-    return;
-  }
-  accept(TOKENIZER_VARIABLE);
-  
-  accept(TOKENIZER_RIGHTPAREN);
-  accept(TOKENIZER_EQ);
-  
-  /* Record expression start position */
-  expr_start_ptr = tokenizer_pos();
-  
-  /* Skip to end of line (expression ends at LF or CR) */
-  while (tokenizer_token() != TOKENIZER_LF && 
-         tokenizer_token() != TOKENIZER_CR && 
-         tokenizer_token() != TOKENIZER_ENDOFINPUT) {
-    tokenizer_next();
-  }
-  
-  expr_end_ptr = tokenizer_pos();
-  
-  /* Calculate offsets from program start */
-  expr_start_offset = (uint16_t)(expr_start_ptr - program_ptr);
-  expr_end_offset = (uint16_t)(expr_end_ptr - program_ptr);
-  
-  /* Store function definition */
-  func_index = func_letter - 'A';
-  fn_table[func_index].func_letter = func_letter;
-  fn_table[func_index].param_var = (uint16_t)param_var;
-  fn_table[func_index].expr_start = expr_start_offset;
-  fn_table[func_index].expr_end = expr_end_offset;
-  fn_table[func_index].defined = 1;
-  
-  #if DEBUG
-    {
-      int expr_len = expr_end_offset - expr_start_offset;
-      char expr_text[100];
-      if (expr_len > 0 && expr_len < 99) {
-        memcpy(expr_text, program_ptr + expr_start_offset, expr_len);
-        expr_text[expr_len] = '\0';
-        DEBUG_PRINTF("def_statement: Defined FN%c with param var %d, expr [%u..%u] = '%s'\n",
-                     func_letter, param_var, expr_start_offset, expr_end_offset, expr_text);
-      } else {
-        DEBUG_PRINTF("def_statement: Defined FN%c with param var %d, expr [%u..%u]\n",
-                     func_letter, param_var, expr_start_offset, expr_end_offset);
-      }
-    }
-  #endif
-  
-  accept(TOKENIZER_LF);
-}
-/*---------------------------------------------------------------------------*/
-static void read_statement(void){
-  /* READ statement - read values from DATA statements
-   * Based on C# working implementation:
-   * 1. Save current tokenizer position
-   * 2. Initialize tokenizer at data_ptr offset
-   * 3. Search forward for next DATA statement
-   * 4. Read the next value from DATA
-   * 5. Update data_ptr offset
-   * 6. Restore tokenizer position
-   */
-  const char *saved_pos;
-  const char *data_pos;
-  int var;
-  uint16_t idx1 = 0, idx2 = 0, idx3 = 0;
-  int is_array = 0;
-  int is_string = 0;
-  VARIABLE_TYPE value;
-  char str_value[MAX_STRINGLEN];
-  int found_data;
-  
-  DEBUG_PRINTF("read_statement: Starting READ statement.\n");
-  accept(TOKENIZER_READ);
-  
-  /* Loop through variables to read */
-  do {
-    is_array = 0;
-    is_string = 0;
-    found_data = 0;
-    
-    /* Determine variable type */
-    if (tokenizer_token() == TOKENIZER_STRINGVARIABLE) {
-      is_string = 1;
-      var = tokenizer_variable_num();
-      accept(TOKENIZER_STRINGVARIABLE);
-      
-      /* Check for string array indexing */
-      if (tokenizer_token() == TOKENIZER_LEFTPAREN) {
-        is_array = 1;
-        accept(TOKENIZER_LEFTPAREN);
-        idx1 = (uint16_t)expr();
-        if (tokenizer_token() == TOKENIZER_COMMA) {
-          accept(TOKENIZER_COMMA);
-          idx2 = (uint16_t)expr();
-          if (tokenizer_token() == TOKENIZER_COMMA) {
-            accept(TOKENIZER_COMMA);
-            idx3 = (uint16_t)expr();
-          }
-        }
-        accept(TOKENIZER_RIGHTPAREN);
-      }
-    } else if (tokenizer_token() == TOKENIZER_VARIABLE) {
-      var = tokenizer_variable_num();
-      accept(TOKENIZER_VARIABLE);
-      
-      /* Check for array indexing */
-      if (tokenizer_token() == TOKENIZER_LEFTPAREN) {
-        is_array = 1;
-        accept(TOKENIZER_LEFTPAREN);
-        idx1 = (uint16_t)expr();
-        if (tokenizer_token() == TOKENIZER_COMMA) {
-          accept(TOKENIZER_COMMA);
-          idx2 = (uint16_t)expr();
-          if (tokenizer_token() == TOKENIZER_COMMA) {
-            accept(TOKENIZER_COMMA);
-            idx3 = (uint16_t)expr();
-          }
-        }
-        accept(TOKENIZER_RIGHTPAREN);
-      }
-    } else {
-      DEBUG_PRINTF("read_statement: Expected variable\n");
-      exit(1);
-    }
-    
-    /* Save current tokenizer position */
-    saved_pos = tokenizer_pos();
-    
-    /* Calculate data_pos from offset and start searching */
-    data_pos = tokenizer_start() + *data_ptr_cell;
-    tokenizer_goto(data_pos);
-    DEBUG_PRINTF("read_statement: Starting search from offset %d\n", *data_ptr_cell);
-    
-    /* Check if we're continuing from a previous DATA line (data_ptr_cell > 0 and we're at a value) */
-    if (*data_ptr_cell > 0 && (tokenizer_token() == TOKENIZER_NUMBER || tokenizer_token() == TOKENIZER_STRING)) {
-      /* We're positioned at the next value in the same DATA line, no need to search */
-      found_data = 1;
-      DEBUG_PRINTF("read_statement: Continuing from previous DATA line\n");
-    } else {
-      /* Search for next DATA statement */
-      DEBUG_PRINTF("read_statement: Searching for DATA statement\n");
-      while (tokenizer_token() != TOKENIZER_ENDOFINPUT && !found_data) {
-        /* Check current line first, then advance to next line if needed. */
-        if (tokenizer_token() == TOKENIZER_NUMBER) {
-          tokenizer_next();
-          DEBUG_PRINTF("#");
-        }
-        
-        if (tokenizer_token() == TOKENIZER_DATA) {
-          accept(TOKENIZER_DATA);
-          found_data = 1;
-          break;
-        }
-
-        if (tokenizer_token() == TOKENIZER_LF) {
-          tokenizer_next();
-        } else {
-          tokenizer_skip();
-          DEBUG_PRINTF(".");
-        }
-      }
-    }
-    
-    if (!found_data) {
-      DEBUG_PRINTF("read_statement: Out of DATA\n");
-      tokenizer_goto(saved_pos);
-      exit(1);
-    }
-    
-    DEBUG_PRINTF("read_statement: After finding DATA, token=%d, at '%.20s'\n", 
-                 tokenizer_token(), tokenizer_pos());
-    
-    /* Read value from DATA statement */
-    if (is_string) {
-      /* Read string value */
-      if (tokenizer_token() == TOKENIZER_STRING) {
-        tokenizer_string(str_value, sizeof(str_value));
-        DEBUG_PRINTF("read_statement: Read string value '%s'\n", str_value);
-        accept(TOKENIZER_STRING);
-      } else if (tokenizer_token() == TOKENIZER_NUMBER) {
-        /* Allow numbers in string variables */
-        snprintf(str_value, sizeof(str_value), "%g", tokenizer_num());
-        accept(TOKENIZER_NUMBER);
-      } else {
-        DEBUG_PRINTF("read_statement: Expected string or number in DATA\n");
-        tokenizer_goto(saved_pos);
-        exit(1);
-      }
-      
-      /* Assign to string variable or array */
-      DEBUG_PRINTF("read_statement: Setting string var %d to '%s'\n", var, str_value);
-      if (is_array) {
-        set_stringarray_element(var, idx1, idx2, idx3, str_value);
-      } else {
-        set_stringvariable(var, str_value);
-      }
-    } else {
-      /* Read numeric value */
-      if (tokenizer_token() == TOKENIZER_NUMBER) {
-        DEBUG_PRINTF("read_statement: About to read number at '%.10s'\n", tokenizer_pos());
-        value = tokenizer_num();
-        accept(TOKENIZER_NUMBER);
-        DEBUG_PRINTF("read_statement: Read numeric value %d\n", (int)value);
-      } else if (tokenizer_token() == TOKENIZER_STRING) {
-        /* Try to parse string as number */
-        tokenizer_string(str_value, sizeof(str_value));
-        value = strtod(str_value, NULL);
-        accept(TOKENIZER_STRING);
-      } else {
-        DEBUG_PRINTF("read_statement: Expected number in DATA\n");
-        tokenizer_goto(saved_pos);
-        exit(1);
-      }
-      
-      /* Assign to numeric variable */
-      if (is_array) {
-        set_array_element(var, idx1, idx2, idx3, value);
-      } else {
-        set_variable(var, value);
-      }
-    }
-    
-    /* Update data_ptr_cell offset to current position (after the value we just read) */
-    /* Skip comma if present */
-    if (tokenizer_token() == TOKENIZER_COMMA) {
-      accept(TOKENIZER_COMMA);
-    }
-    *data_ptr_cell = (int32_t)(tokenizer_pos() - tokenizer_start());
-    DEBUG_PRINTF("read_statement: Updated data_ptr_cell to %d, char='%c'\n", 
-                 *data_ptr_cell, 
-                 *data_ptr_cell < 100 ? *(tokenizer_start() + *data_ptr_cell) : '?');
-    
-    /* Restore tokenizer to READ statement */
-    tokenizer_goto(saved_pos);
-    
-    /* Check for more variables in READ */
-    if (tokenizer_token() == TOKENIZER_COMMA) {
-      accept(TOKENIZER_COMMA);
-    } else {
-      /* No more variables - advance to end of statement */
-      while (tokenizer_token() != TOKENIZER_LF &&
-             tokenizer_token() != TOKENIZER_CR &&
-             tokenizer_token() != TOKENIZER_ENDOFINPUT) {
-        tokenizer_next();
-      }
-      break;
-    }
-  } while (1);
-  
-  /* Accept line ending (LF or CR) */
-  if (tokenizer_token() == TOKENIZER_LF) {
-    accept(TOKENIZER_LF);
-  } else if (tokenizer_token() == TOKENIZER_CR) {
-    accept(TOKENIZER_CR);
-    /* Some files may have LF after CR */
-    if (tokenizer_token() == TOKENIZER_LF) {
-      accept(TOKENIZER_LF);
-    }
-  }
-  DEBUG_PRINTF("read_statement: READ complete.\n");
 }
 /*---------------------------------------------------------------------------*/
 static void if_statement(void){
@@ -2173,20 +1279,16 @@ static void if_statement(void){
   #endif
   accept(TOKENIZER_THEN);
   if(r) {
-    /* Check for implicit GOTO: IF condition THEN linenumber */
-    DEBUG_PRINTF("if_statement: r=true, next token=%d\n", tokenizer_token());
-    if (tokenizer_token() == TOKENIZER_NUMBER) {
-      DEBUG_PRINTF("if_statement: Implicit GOTO to %u\n", tokenizer_linenum());
-      jump_linenum(tokenizer_linenum());
-    } else {
-      statement();
-    }
+    statement();
   } else {
-    /* Skip to end of line when condition is false. */
-    while(tokenizer_token() != TOKENIZER_LF &&
-          tokenizer_token() != TOKENIZER_ENDOFINPUT) {
+    do {
       tokenizer_next();
-    }
+      if(tokenizer_token() == TOKENIZER_ERROR) {
+        runtime_error("TS", "Unsupported statement", current_line_number);
+        return;
+      }
+    } while(tokenizer_token() != TOKENIZER_LF &&
+        tokenizer_token() != TOKENIZER_ENDOFINPUT);
     if(tokenizer_token() == TOKENIZER_LF) {
       tokenizer_next();
     }
@@ -2196,95 +1298,22 @@ static void if_statement(void){
 static void let_statement(void){
 // string additions here
   int var;
-  uint16_t idx1 = 0, idx2 = 0, idx3 = 0;
-  int is_array = 0;
-  
   if (tokenizer_token() == TOKENIZER_VARIABLE) {
      var = tokenizer_variable_num();
      accept(TOKENIZER_VARIABLE);
-     
-     /* Check for array indexing */
-     if (tokenizer_token() == TOKENIZER_LEFTPAREN) {
-       is_array = 1;
-       accept(TOKENIZER_LEFTPAREN);
-       idx1 = (uint16_t)expr();
-       
-       if (tokenizer_token() == TOKENIZER_COMMA) {
-         accept(TOKENIZER_COMMA);
-         idx2 = (uint16_t)expr();
-         
-         if (tokenizer_token() == TOKENIZER_COMMA) {
-           accept(TOKENIZER_COMMA);
-           idx3 = (uint16_t)expr();
-         }
-       }
-       
-       accept(TOKENIZER_RIGHTPAREN);
-     }
-     
      accept(TOKENIZER_EQ);
-     
-     if (is_array) {
-       set_array_element(var, idx1, idx2, idx3, expr());
-     } else {
-       set_variable(var, expr());
-     }
-     
+     set_variable(var, expr());
 	 #if VERBOSE
-     if (is_array) {
-       DEBUG_PRINTF("let_statement: assign to array %c(%u", 'a'+var, (unsigned)idx1);
-       if (idx2 > 0) DEBUG_PRINTF(",%u", (unsigned)idx2);
-       if (idx3 > 0) DEBUG_PRINTF(",%u", (unsigned)idx3);
-       DEBUG_PRINTF(")\n");
-     } else {
-      DEBUG_PRINTF("let_statement: assign %g to %d.\n", get_variable(var), var);
-     }
+    DEBUG_PRINTF("let_statement: assign %d to %d.\n", get_variable(var), var);
      #endif
 	 accept(TOKENIZER_LF);
   } else if (tokenizer_token() == TOKENIZER_STRINGVARIABLE) {
      var = tokenizer_variable_num();
-     accept(TOKENIZER_STRINGVARIABLE);
-     
-     /* Check for array indexing */
-     is_array = 0;
-     if (tokenizer_token() == TOKENIZER_LEFTPAREN) {
-       is_array = 1;
-       accept(TOKENIZER_LEFTPAREN);
-       idx1 = (uint16_t)expr();
-       
-       if (tokenizer_token() == TOKENIZER_COMMA) {
-         accept(TOKENIZER_COMMA);
-         idx2 = (uint16_t)expr();
-         
-         if (tokenizer_token() == TOKENIZER_COMMA) {
-           accept(TOKENIZER_COMMA);
-           idx3 = (uint16_t)expr();
-         }
-       }
-       
-       accept(TOKENIZER_RIGHTPAREN);
-     }
-     
+	 accept(TOKENIZER_STRINGVARIABLE);
      accept(TOKENIZER_EQ);
-     
-     if (is_array) {
-       set_stringarray_element(var, idx1, idx2, idx3, sexpr());
-     } else {
-       set_stringvariable(var, sexpr());
-     }
-     
-     #if VERBOSE
-       if (is_array) {
-         DEBUG_PRINTF("let_statement: assign to string array %c$(%u", 'a'+var, (unsigned)idx1);
-         if (idx2 > 0) DEBUG_PRINTF(",%u", (unsigned)idx2);
-         if (idx3 > 0) DEBUG_PRINTF(",%u", (unsigned)idx3);
-         DEBUG_PRINTF(")\n");
-       } else {
-         DEBUG_PRINTF("let_statement: string assign '%s' to %d\n", get_stringvariable(var), var);
-       }
-     #endif
-     
-     accept(TOKENIZER_LF);
+	 set_stringvariable(var, sexpr());
+	 DEBUG_PRINTF("let_statement: string assign '%s' to %d\n", get_stringvariable(var), var);
+	 accept(TOKENIZER_LF);
 
   }
   // end of string additions
@@ -2293,7 +1322,6 @@ static void let_statement(void){
 static void gosub_statement(void) {
   uint32_t target_line;
   uint32_t return_line;
-  
   accept(TOKENIZER_GOSUB);
   target_line = tokenizer_linenum();
   accept(TOKENIZER_NUMBER);
@@ -2363,7 +1391,7 @@ static void next_statement(void){
 }
 /*---------------------------------------------------------------------------*/
 static void for_statement(void) {
-  int for_variable, to, step;
+  int for_variable, to;
 
   accept(TOKENIZER_FOR);
   for_variable = tokenizer_variable_num();
@@ -2372,15 +1400,6 @@ static void for_statement(void) {
   set_variable(for_variable, expr());
   accept(TOKENIZER_TO);
   to = expr();
-  
-  /* Optional STEP parameter, defaults to 1 */
-  if (tokenizer_token() == TOKENIZER_STEP) {
-    accept(TOKENIZER_STEP);
-    step = expr();
-  } else {
-    step = 1;
-  }
-  
   accept(TOKENIZER_LF);
 
   for_state st;
@@ -2393,12 +1412,67 @@ static void for_statement(void) {
   }
   st.for_variable_index = (int32_t)for_variable;
   st.to = (int32_t)to;
-  st.step = (int32_t)step;
   for_push(st);
   #if VERBOSE
-    DEBUG_PRINTF("for_statement: new for, var %d to %d step %d.\n", (int)st.for_variable_index, (int)st.to, (int)st.step);
+    DEBUG_PRINTF("for_statement: new for, var %d to %d, line_after_for=%u.\n",
+                 (int)st.for_variable_index, (int)st.to, st.line_after_for);
   #endif
   
+}
+/*---------------------------------------------------------------------------*/
+static void def_statement(void) {
+  int func_index;
+  int param_var;
+  const char *expr_start_ptr;
+  const char *expr_end_ptr;
+  uint16_t expr_start_offset;
+  uint16_t expr_end_offset;
+
+  accept(TOKENIZER_DEF);
+  accept(TOKENIZER_FN);
+
+  if (tokenizer_token() != TOKENIZER_VARIABLE) {
+    runtime_error("TS", "Expected function name in DEF FN", current_line_number);
+    return;
+  }
+  func_index = tokenizer_variable_num();
+  if (func_index < 0 || func_index >= MAX_FN_DEFS) {
+    runtime_error("TS", "Invalid DEF FN function name", current_line_number);
+    return;
+  }
+  accept(TOKENIZER_VARIABLE);
+
+  accept(TOKENIZER_LEFTPAREN);
+  if (tokenizer_token() != TOKENIZER_VARIABLE) {
+    runtime_error("TS", "Expected DEF FN parameter", current_line_number);
+    return;
+  }
+  param_var = tokenizer_variable_num();
+  if (param_var < 0 || param_var >= UBASIC_VARIABLE_COUNT) {
+    runtime_error("TS", "Invalid DEF FN parameter", current_line_number);
+    return;
+  }
+  accept(TOKENIZER_VARIABLE);
+  accept(TOKENIZER_RIGHTPAREN);
+  accept(TOKENIZER_EQ);
+
+  expr_start_ptr = tokenizer_pos();
+  while (tokenizer_token() != TOKENIZER_LF &&
+         tokenizer_token() != TOKENIZER_CR &&
+         tokenizer_token() != TOKENIZER_ENDOFINPUT) {
+    tokenizer_next();
+  }
+  expr_end_ptr = tokenizer_pos();
+
+  expr_start_offset = (uint16_t)(expr_start_ptr - program_ptr);
+  expr_end_offset = (uint16_t)(expr_end_ptr - program_ptr);
+
+  fn_table[func_index].param_var = (uint16_t)param_var;
+  fn_table[func_index].expr_start = expr_start_offset;
+  fn_table[func_index].expr_end = expr_end_offset;
+  fn_table[func_index].defined = 1;
+
+  accept(TOKENIZER_LF);
 }
 /*---------------------------------------------------------------------------*/
 static void peek_statement(void){
@@ -2436,198 +1510,12 @@ static void end_statement(void)
   ended = 1;
 }
 /*---------------------------------------------------------------------------*/
-static void dim_statement(void) {
-  int var;
-  uint16_t var_id;
-  var_desc_t *v;
-  uint16_t dim1, dim2 = 1, dim3 = 1;
-  uint16_t total_elements;
-  uint16_t data_bytes;
-  uint16_t desc_offset, data_offset;
-  array_desc_t *arr_desc;
-  string_array_desc_t *strarr_desc;
-  VARIABLE_TYPE *arr_data;
-  uint16_t *strarr_data;
-  uint16_t i;
-  int is_string = 0;
-  
-  accept(TOKENIZER_DIM);
-  
-  /* Check if string or numeric variable */
-  if (tokenizer_token() == TOKENIZER_STRINGVARIABLE) {
-    is_string = 1;
-    var = tokenizer_variable_num();
-    if (!varnum_is_valid(var)) {
-      DEBUG_PRINTF("dim_statement: Invalid string variable index.\n");
-      ended = 1;
-      return;
-    }
-    var_id = (uint16_t)var;
-    accept(TOKENIZER_STRINGVARIABLE);
-  } else if (tokenizer_token() == TOKENIZER_VARIABLE) {
-    var = tokenizer_variable_num();
-    if (!varnum_is_valid(var)) {
-      DEBUG_PRINTF("dim_statement: Invalid variable index.\n");
-      ended = 1;
-      return;
-    }
-    var_id = (uint16_t)var;
-    accept(TOKENIZER_VARIABLE);
-  } else {
-    DEBUG_PRINTF("dim_statement: Expected variable name.\n");
-    ended = 1;
-    return;
-  }
-  
-  accept(TOKENIZER_LEFTPAREN);
-  
-  /* Parse dimensions */
-  dim1 = (uint16_t)expr();
-  
-  if (tokenizer_token() == TOKENIZER_COMMA) {
-    accept(TOKENIZER_COMMA);
-    dim2 = (uint16_t)expr();
-    
-    if (tokenizer_token() == TOKENIZER_COMMA) {
-      accept(TOKENIZER_COMMA);
-      dim3 = (uint16_t)expr();
-    }
-  }
-  
-  accept(TOKENIZER_RIGHTPAREN);
+static void randomize_statement(void)
+{
+  accept(TOKENIZER_RANDOMIZE);
+  DEBUG_PRINTF("randomize_statement: Initializing random seed.\n");
+  srand((unsigned int)time(NULL));
   accept(TOKENIZER_LF);
-  
-  /* Validate dimensions */
-  if (dim1 == 0 || dim2 == 0 || dim3 == 0) {
-    DEBUG_PRINTF("dim_statement: Invalid dimension (zero).\n");
-    ended = 1;
-    return;
-  }
-  
-  /* Calculate total size - allocate N+1 elements so both 0..N and 1..N are valid */
-  total_elements = (dim1 + 1) * (dim2 + (dim2 > 1 ? 1 : 0)) * (dim3 + (dim3 > 1 ? 1 : 0));
-  
-  if (is_string) {
-    /* String array - stores offsets (uint16_t) */
-    data_bytes = total_elements * sizeof(uint16_t);
-    
-    #if VERBOSE
-      DEBUG_PRINTF("dim_statement: DIM id=%u$(%u", (unsigned)var_id, (unsigned)dim1);
-      if (dim2 > 1) DEBUG_PRINTF(",%u", (unsigned)dim2);
-      if (dim3 > 1) DEBUG_PRINTF(",%u", (unsigned)dim3);
-      DEBUG_PRINTF(") = %u elements, %u bytes\n", 
-                   (unsigned)total_elements, (unsigned)data_bytes);
-    #endif
-    
-    /* Create string array variable */
-    v = find_or_create_variable(var_id, VARTYPE_STRING_ARRAY);
-    if (v == NULL) {
-      DEBUG_PRINTF("dim_statement: Failed to create string array variable.\n");
-      ended = 1;
-      return;
-    }
-    if (v->strarr_offset != 0) {
-      DEBUG_PRINTF("dim_statement: String array already dimensioned.\n");
-      ended = 1;
-      return;
-    }
-    
-    /* Allocate string array descriptor */
-    desc_offset = heap_alloc(sizeof(string_array_desc_t));
-    if (desc_offset == 0) {
-      DEBUG_PRINTF("dim_statement: Out of memory for string array descriptor.\n");
-      ended = 1;
-      return;
-    }
-    v->strarr_offset = desc_offset;
-    
-    /* Allocate array data (offsets) */
-    data_offset = heap_alloc(data_bytes);
-    if (data_offset == 0) {
-      DEBUG_PRINTF("dim_statement: Out of memory for string array data.\n");
-      ended = 1;
-      return;
-    }
-    
-    /* Initialize string array descriptor */
-    strarr_desc = (string_array_desc_t *)(mem_base + desc_offset);
-    strarr_desc->data_offset = data_offset;
-    strarr_desc->dimensions = (dim2 > 1) ? ((dim3 > 1) ? 3 : 2) : 1;
-    strarr_desc->dim_size[0] = dim1;
-    strarr_desc->dim_size[1] = dim2;
-    strarr_desc->dim_size[2] = dim3;
-    
-    /* Initialize array data to zero (null string offsets) */
-    strarr_data = (uint16_t *)(mem_base + data_offset);
-    for (i = 0; i < total_elements; i++) {
-      strarr_data[i] = 0;
-    }
-    
-    #if VERBOSE
-      DEBUG_PRINTF("dim_statement: String array descriptor at %u, data at %u\n",
-                   (unsigned)desc_offset, (unsigned)data_offset);
-    #endif
-  } else {
-    /* Numeric array - stores values */
-    data_bytes = total_elements * sizeof(VARIABLE_TYPE);
-    
-    #if VERBOSE
-      DEBUG_PRINTF("dim_statement: DIM id=%u(%u", (unsigned)var_id, (unsigned)dim1);
-      if (dim2 > 1) DEBUG_PRINTF(",%u", (unsigned)dim2);
-      if (dim3 > 1) DEBUG_PRINTF(",%u", (unsigned)dim3);
-      DEBUG_PRINTF(") = %u elements, %u bytes\n", 
-                   (unsigned)total_elements, (unsigned)data_bytes);
-    #endif
-    
-    /* Create array variable */
-    v = find_or_create_variable(var_id, VARTYPE_ARRAY);
-    if (v == NULL) {
-      DEBUG_PRINTF("dim_statement: Failed to create variable.\n");
-      ended = 1;
-      return;
-    }
-    if (v->arr_offset != 0) {
-      DEBUG_PRINTF("dim_statement: Array already dimensioned.\n");
-      ended = 1;
-      return;
-    }
-    
-    /* Allocate array descriptor */
-    desc_offset = heap_alloc(sizeof(array_desc_t));
-    if (desc_offset == 0) {
-      DEBUG_PRINTF("dim_statement: Out of memory for array descriptor.\n");
-      ended = 1;
-      return;
-    }
-    v->arr_offset = desc_offset;
-    
-    /* Allocate array data */
-    data_offset = heap_alloc(data_bytes);
-    if (data_offset == 0) {
-      DEBUG_PRINTF("dim_statement: Out of memory for array data.\n");
-      ended = 1;
-      return;
-    }
-    
-    /* Initialize array descriptor */
-    arr_desc = (array_desc_t *)(mem_base + desc_offset);
-    arr_desc->data_offset = data_offset;
-    arr_desc->dimensions = (dim2 > 1) ? ((dim3 > 1) ? 3 : 2) : 1;
-    arr_desc->dim_size[0] = dim1;
-    arr_desc->dim_size[1] = dim2;
-    arr_desc->dim_size[2] = dim3;
-    
-    /* Initialize array data to zero */
-    arr_data = (VARIABLE_TYPE *)(mem_base + data_offset);
-    for (i = 0; i < total_elements; i++) {
-      arr_data[i] = 0;
-    }
-    
-    #if VERBOSE
-      DEBUG_PRINTF("dim_statement: Array descriptor at %u, data at %u\n",
-                   (unsigned)desc_offset, (unsigned)data_offset);
-    #endif
-  }
 }
 /*---------------------------------------------------------------------------*/
 static void statement(void){
@@ -2638,12 +1526,6 @@ static void statement(void){
   switch(token) {
   case TOKENIZER_PRINT:
     print_statement();
-    break;
-  case TOKENIZER_INPUT:
-    input_statement();
-    break;
-  case TOKENIZER_DIM:
-    dim_statement();
     break;
   case TOKENIZER_IF:
     if_statement();
@@ -2669,32 +1551,20 @@ static void statement(void){
   case TOKENIZER_NEXT:
     next_statement();
     break;
-  case TOKENIZER_ON:
-    on_statement();
-    break;
-  case TOKENIZER_CHANGE:
-    change_statement();
-    break;
-  case TOKENIZER_DATA:
-    data_statement();
-    break;
-  case TOKENIZER_DEF:
-    def_statement();
-    break;
-  case TOKENIZER_RESTORE:
-    restore_statement();
-    break;
-  case TOKENIZER_READ:
-    read_statement();
-    break;
   case TOKENIZER_END:
     end_statement();
+    break;
+  case TOKENIZER_RANDOMIZE:
+    randomize_statement();
     break;
   case TOKENIZER_PUSH:
     push_statement();
     break;
   case TOKENIZER_POP:
     pop_statement();
+    break;
+  case TOKENIZER_DEF:
+    def_statement();
     break;
   case TOKENIZER_LET:
     accept(TOKENIZER_LET);
@@ -2728,379 +1598,101 @@ static void line_statement(void){
   statement();
 }
 /*---------------------------------------------------------------------------*/
-static void set_variable(int varnum, VARIABLE_TYPE value) {
-  uint16_t var_id;
-  var_desc_t *v;
-  
-  if (varnum < 0 || varnum >= UBASIC_VARIABLE_COUNT) return;
-  
-  var_id = (uint16_t)varnum;
-  
-  v = find_or_create_variable(var_id, VARTYPE_INTEGER);
-  if (v != NULL) {
-    v->int_value = value;
+static void set_variable(int varnum, VARIABLE_TYPE value){
+  if(variables_mem != NULL && varnum >= 0 && varnum < UBASIC_VARIABLE_COUNT) {
+    variables_mem[varnum] = value;
   }
 }
 /*---------------------------------------------------------------------------*/
-static VARIABLE_TYPE get_variable(int varnum) {
-  uint16_t var_id;
-  var_desc_t *v;
-  
-  if (varnum < 0 || varnum >= UBASIC_VARIABLE_COUNT) return 0;
-  
-  var_id = (uint16_t)varnum;
-  
-  v = find_or_create_variable(var_id, VARTYPE_INTEGER);
-  return (v != NULL) ? v->int_value : 0;
+static VARIABLE_TYPE get_variable(int varnum){
+  if(variables_mem != NULL && varnum >= 0 && varnum < UBASIC_VARIABLE_COUNT) {
+    return variables_mem[varnum];
+  }
+  return 0;
 }
 /*---------------------------------------------------------------------------*/
 // string additions
 /*---------------------------------------------------------------------------*/
 void set_stringvariable(int svarnum, char *svalue) {
-  uint16_t var_id;
-  var_desc_t *v;
+  ubasic_string_state_t *h;
   size_t len;
-  uint16_t offset;
+  uint16_t need;
+  uint16_t new_base;
 
-  if (svalue == NULL || mem_base == NULL) return;
-  if (svarnum < 0 || svarnum >= UBASIC_VARIABLE_COUNT) return;
-  
-  var_id = (uint16_t)svarnum;
-  
-  v = find_or_create_variable(var_id, VARTYPE_STRING);
-  if (v == NULL) return;
-  
-  len = strlen(svalue);
-  if (len > MAX_STRINGVARLEN) {
-    len = MAX_STRINGVARLEN;
+  if (svalue == NULL || mem_base == NULL) {
+    return;
   }
-  if (len == 0) {
-    v->str_offset = 0;
+  if (svarnum < 0 || svarnum >= MAX_SVARNUM) {
+    return;
+  }
+  h = str_state();
+  if (h == NULL) {
     return;
   }
   
-  /* Allocate in string pool */
-  offset = str_pool_alloc((uint16_t)(len + 1));
-  if (offset == 0) return;
+  len = strlen(svalue);
+  if (len > (size_t)MAX_STRINGVARLEN) {
+    len = (size_t)MAX_STRINGVARLEN;
+  }
+  if (len == 0) {
+    h->var_off[svarnum] = 0;
+    return;
+  }
   
-  memcpy(mem_base + offset, svalue, len);
-  mem_base[offset + len] = '\0';
-  v->str_offset = offset;
+  need = (uint16_t)(len + 1);
+  
+  /* Check if we have space (growing downward from pool_base toward pool_min) */
+  if (h->pool_base < h->pool_min + need) {
+    DEBUG_PRINTF("set_stringvariable: Out of string memory (need %u bytes, have %u).\n",
+                 (unsigned)need, (unsigned)(h->pool_base - h->pool_min));
+    ended = 1;
+    return;
+  }
+  
+  /* Allocate downward */
+  new_base = h->pool_base - need;
+  memcpy(mem_base + new_base, svalue, len);
+  mem_base[new_base + len] = '\0';
+  h->var_off[svarnum] = new_base;  /* Store absolute offset */
+  h->pool_base = new_base;
   
   #if VERBOSE
-    DEBUG_PRINTF("set_stringvariable: Assigned '%s' to id=%u$ at offset %u\n",
-                 svalue, (unsigned)var_id, (unsigned)offset);
+    DEBUG_PRINTF("set_stringvariable: Assigned '%s' to var %d at offset %u.\n", 
+                 svalue, svarnum, (unsigned)new_base);
   #endif
 }
 /*---------------------------------------------------------------------------*/
 char *get_stringvariable(int varnum) {
-  uint16_t var_id;
-  var_desc_t *v;
-  
-  if (varnum < 0 || varnum >= UBASIC_VARIABLE_COUNT || mem_base == NULL) {
-    #if DEBUG
-      DEBUG_PRINTF("get_stringvariable: Invalid varnum %d or no mem_base\n", varnum);
-    #endif
+  ubasic_string_state_t *h;
+  uint16_t o;
+  size_t string_state_offset;
+
+  if (varnum < 0 || varnum >= MAX_SVARNUM || mem_base == NULL) {
+    return scpy(nullstring);
+  }
+  h = str_state();
+  if (h == NULL) {
     return scpy(nullstring);
   }
   
-  var_id = (uint16_t)varnum;
+  o = h->var_off[varnum];
+  if (o == 0) {
+    /* Return empty string at pool_base (position 0 of pool_data) */
+    return (char *)mem_base;  /* Points to empty string at offset 0 */
+  }
   
-  v = find_variable(var_id, VARTYPE_STRING);
-  if (v == NULL) {
-    #if DEBUG
-      DEBUG_PRINTF("get_stringvariable: Variable id=%u$ not found\n", (unsigned)var_id);
-    #endif
+  /* Validate offset is within pool bounds */
+  string_state_offset = mem_capacity_bytes - UBASIC_VARIABLES_SIZE - UBASIC_STRING_STATE_SIZE;
+  if (o < h->pool_min || o >= string_state_offset) {
+    DEBUG_PRINTF("get_stringvariable: Invalid offset %u for var %d.\n", (unsigned)o, varnum);
     return scpy(nullstring);
   }
   
-  if (v->str_offset == 0) {
-    #if DEBUG
-      DEBUG_PRINTF("get_stringvariable: Variable id=%u$ has zero offset\n", (unsigned)var_id);
-    #endif
-    return scpy(nullstring);
-  }
-  
-  #if DEBUG
-    DEBUG_PRINTF("get_stringvariable: id=%u$ = '%s' (offset %u)\n", 
-                 (unsigned)var_id, (char *)(mem_base + v->str_offset), (unsigned)v->str_offset);
-  #endif
-  
-  return (char *)(mem_base + v->str_offset);
+  return (char *)(mem_base + o);
 }
-/*---------------------------------------------------------------------------*/
-static VARIABLE_TYPE get_array_element(int varnum, uint16_t idx1, uint16_t idx2, uint16_t idx3) {
-  uint16_t var_id = (uint16_t)varnum;
-  var_desc_t *v;
-  array_desc_t *arr_desc;
-  VARIABLE_TYPE *arr_data;
-  uint16_t offset;
-  
-  if (varnum < 0 || varnum >= UBASIC_VARIABLE_COUNT || mem_base == NULL) {
-    return 0;
-  }
-  
-  v = find_variable(var_id, VARTYPE_ARRAY);
-  if (v == NULL) {
-    DEBUG_PRINTF("get_array_element: Variable id=%u is not an array\n", (unsigned)var_id);
-    return 0;
-  }
-  
-  arr_desc = (array_desc_t *)(mem_base + v->arr_offset);
-  
-  /* Validate indices (0..N, where N = declared dimension) */
-  if (idx1 > arr_desc->dim_size[0]) {
-    DEBUG_PRINTF("get_array_element: Index 1 (%u) out of bounds (valid range 0..%u)\n", 
-                 (unsigned)idx1, (unsigned)arr_desc->dim_size[0]);
-    return 0;
-  }
-  if (arr_desc->dimensions >= 2 && idx2 > arr_desc->dim_size[1]) {
-    DEBUG_PRINTF("get_array_element: Index 2 (%u) out of bounds (valid range 0..%u)\n", 
-                 (unsigned)idx2, (unsigned)arr_desc->dim_size[1]);
-    return 0;
-  }
-  if (arr_desc->dimensions >= 3 && idx3 > arr_desc->dim_size[2]) {
-    DEBUG_PRINTF("get_array_element: Index 3 (%u) out of bounds (valid range 0..%u)\n", 
-                 (unsigned)idx3, (unsigned)arr_desc->dim_size[2]);
-    return 0;
-  }
-  
-  /* Calculate linear offset (0-based direct) */
-  if (arr_desc->dimensions == 1) {
-    offset = idx1;
-  } else if (arr_desc->dimensions == 2) {
-    offset = idx1 * (arr_desc->dim_size[1] + 1) + idx2;
-  } else {
-    offset = (idx1 * (arr_desc->dim_size[1] + 1) + idx2) * (arr_desc->dim_size[2] + 1) + idx3;
-  }
-  
-  arr_data = (VARIABLE_TYPE *)(mem_base + arr_desc->data_offset);
-  return arr_data[offset];
-}
-/*---------------------------------------------------------------------------*/
-static void set_array_element(int varnum, uint16_t idx1, uint16_t idx2, uint16_t idx3, VARIABLE_TYPE value) {
-  uint16_t var_id = (uint16_t)varnum;
-  var_desc_t *v;
-  array_desc_t *arr_desc;
-  VARIABLE_TYPE *arr_data;
-  uint16_t offset;
-  
-  if (varnum < 0 || varnum >= UBASIC_VARIABLE_COUNT || mem_base == NULL) {
-    return;
-  }
-  
-  v = find_variable(var_id, VARTYPE_ARRAY);
-  if (v == NULL) {
-    DEBUG_PRINTF("set_array_element: Variable id=%u is not an array\n", (unsigned)var_id);
-    ended = 1;
-    return;
-  }
-  
-  arr_desc = (array_desc_t *)(mem_base + v->arr_offset);
-  
-  /* Validate indices (0..N, where N = declared dimension) */
-  if (idx1 > arr_desc->dim_size[0]) {
-    DEBUG_PRINTF("set_array_element: Index 1 (%u) out of bounds (valid range 0..%u)\n", 
-                 (unsigned)idx1, (unsigned)arr_desc->dim_size[0]);
-    ended = 1;
-    return;
-  }
-  if (arr_desc->dimensions >= 2 && idx2 > arr_desc->dim_size[1]) {
-    DEBUG_PRINTF("set_array_element: Index 2 (%u) out of bounds (valid range 0..%u)\n", 
-                 (unsigned)idx2, (unsigned)arr_desc->dim_size[1]);
-    ended = 1;
-    return;
-  }
-  if (arr_desc->dimensions >= 3 && idx3 > arr_desc->dim_size[2]) {
-    DEBUG_PRINTF("set_array_element: Index 3 (%u) out of bounds (valid range 0..%u)\n", 
-                 (unsigned)idx3, (unsigned)arr_desc->dim_size[2]);
-    ended = 1;
-    return;
-  }
-  
-  /* Calculate linear offset (0-based direct) */
-  if (arr_desc->dimensions == 1) {
-    offset = idx1;
-  } else if (arr_desc->dimensions == 2) {
-    offset = idx1 * (arr_desc->dim_size[1] + 1) + idx2;
-  } else {
-    offset = (idx1 * (arr_desc->dim_size[1] + 1) + idx2) * (arr_desc->dim_size[2] + 1) + idx3;
-  }
-  
-  arr_data = (VARIABLE_TYPE *)(mem_base + arr_desc->data_offset);
-  arr_data[offset] = value;
-  
-  #if VERBOSE
-    DEBUG_PRINTF("set_array_element: id=%u(%u", (unsigned)var_id, (unsigned)idx1);
-    if (arr_desc->dimensions >= 2) DEBUG_PRINTF(",%u", (unsigned)idx2);
-    if (arr_desc->dimensions >= 3) DEBUG_PRINTF(",%u", (unsigned)idx3);
-    DEBUG_PRINTF(") = %d\n", (int)value);
-  #endif
-}
-/*---------------------------------------------------------------------------*/
-static char* get_stringarray_element(int varnum, uint16_t idx1, uint16_t idx2, uint16_t idx3) {
-  uint16_t var_id = (uint16_t)varnum;
-  var_desc_t *v;
-  string_array_desc_t *arr_desc;
-  uint16_t *arr_data;
-  uint16_t offset, str_offset;
-  
-  if (varnum < 0 || varnum >= UBASIC_VARIABLE_COUNT || mem_base == NULL) {
-    return scpy(nullstring);
-  }
-  
-  v = find_variable(var_id, VARTYPE_STRING_ARRAY);
-  if (v == NULL) {
-    DEBUG_PRINTF("get_stringarray_element: Variable id=%u$ is not a string array\n", (unsigned)var_id);
-    return scpy(nullstring);
-  }
-  
-  arr_desc = (string_array_desc_t *)(mem_base + v->strarr_offset);
-  
-  /* Validate indices (0..N, where N = declared dimension) */
-  if (idx1 > arr_desc->dim_size[0]) {
-    DEBUG_PRINTF("get_stringarray_element: Index 1 (%u) out of bounds (valid range 0..%u)\n", 
-                 (unsigned)idx1, (unsigned)arr_desc->dim_size[0]);
-    return scpy(nullstring);
-  }
-  if (arr_desc->dimensions >= 2 && idx2 > arr_desc->dim_size[1]) {
-    DEBUG_PRINTF("get_stringarray_element: Index 2 (%u) out of bounds (valid range 0..%u)\n", 
-                 (unsigned)idx2, (unsigned)arr_desc->dim_size[1]);
-    return scpy(nullstring);
-  }
-  if (arr_desc->dimensions >= 3 && idx3 > arr_desc->dim_size[2]) {
-    DEBUG_PRINTF("get_stringarray_element: Index 3 (%u) out of bounds (valid range 0..%u)\n", 
-                 (unsigned)idx3, (unsigned)arr_desc->dim_size[2]);
-    return scpy(nullstring);
-  }
-  
-  /* Calculate linear offset (0-based direct) */
-  if (arr_desc->dimensions == 1) {
-    offset = idx1;
-  } else if (arr_desc->dimensions == 2) {
-    offset = idx1 * (arr_desc->dim_size[1] + 1) + idx2;
-  } else {
-    offset = (idx1 * (arr_desc->dim_size[1] + 1) + idx2) * (arr_desc->dim_size[2] + 1) + idx3;
-  }
-  
-  /* Array data contains offsets to strings in string pool */
-  arr_data = (uint16_t *)(mem_base + arr_desc->data_offset);
-  str_offset = arr_data[offset];
-  
-  #if VERBOSE
-    DEBUG_PRINTF("get_stringarray_element: id=%u$(%u", (unsigned)var_id, (unsigned)idx1);
-    if (arr_desc->dimensions >= 2) DEBUG_PRINTF(",%u", (unsigned)idx2);
-    if (arr_desc->dimensions >= 3) DEBUG_PRINTF(",%u", (unsigned)idx3);
-    DEBUG_PRINTF(") offset=%u str_offset=%u\n", (unsigned)offset, (unsigned)str_offset);
-  #endif
-  
-  if (str_offset == 0) {
-    return scpy(nullstring);
-  }
-  
-  return scpy((char *)(mem_base + str_offset));
-}
-/*---------------------------------------------------------------------------*/
-static void set_stringarray_element(int varnum, uint16_t idx1, uint16_t idx2, uint16_t idx3, const char* value) {
-  uint16_t var_id = (uint16_t)varnum;
-  var_desc_t *v;
-  string_array_desc_t *arr_desc;
-  uint16_t *arr_data;
-  uint16_t offset, str_offset;
-  size_t len;
-  
-  if (varnum < 0 || varnum >= UBASIC_VARIABLE_COUNT || mem_base == NULL || value == NULL) {
-    return;
-  }
-  
-  v = find_variable(var_id, VARTYPE_STRING_ARRAY);
-  if (v == NULL) {
-    DEBUG_PRINTF("set_stringarray_element: Variable id=%u$ is not a string array\n", (unsigned)var_id);
-    ended = 1;
-    return;
-  }
-  
-  arr_desc = (string_array_desc_t *)(mem_base + v->strarr_offset);
-  
-  /* Validate indices (0..N, where N = declared dimension) */
-  if (idx1 > arr_desc->dim_size[0]) {
-    DEBUG_PRINTF("set_stringarray_element: Index 1 (%u) out of bounds (valid range 0..%u)\n", 
-                 (unsigned)idx1, (unsigned)arr_desc->dim_size[0]);
-    ended = 1;
-    return;
-  }
-  if (arr_desc->dimensions >= 2 && idx2 > arr_desc->dim_size[1]) {
-    DEBUG_PRINTF("set_stringarray_element: Index 2 (%u) out of bounds (valid range 0..%u)\n", 
-                 (unsigned)idx2, (unsigned)arr_desc->dim_size[1]);
-    ended = 1;
-    return;
-  }
-  if (arr_desc->dimensions >= 3 && idx3 > arr_desc->dim_size[2]) {
-    DEBUG_PRINTF("set_stringarray_element: Index 3 (%u) out of bounds (valid range 0..%u)\n", 
-                 (unsigned)idx3, (unsigned)arr_desc->dim_size[2]);
-    ended = 1;
-    return;
-  }
-  
-  /* Calculate linear offset (0-based direct) */
-  if (arr_desc->dimensions == 1) {
-    offset = idx1;
-  } else if (arr_desc->dimensions == 2) {
-    offset = idx1 * (arr_desc->dim_size[1] + 1) + idx2;
-  } else {
-    offset = (idx1 * (arr_desc->dim_size[1] + 1) + idx2) * (arr_desc->dim_size[2] + 1) + idx3;
-  }
-  
-  /* Allocate string in string pool */
-  len = strlen(value);
-  if (len > MAX_STRINGVARLEN) {
-    len = MAX_STRINGVARLEN;
-  }
-  
-  if (len == 0) {
-    str_offset = 0;
-  } else {
-    str_offset = str_pool_alloc((uint16_t)(len + 1));
-    DEBUG_PRINTF("set_stringarray_element: Allocated %u bytes at offset %u for '%s'\n",
-                 (unsigned)(len + 1), (unsigned)str_offset, value);
-    if (str_offset == 0) {
-      DEBUG_PRINTF("set_stringarray_element: Out of string pool memory\n");
-      ended = 1;
-      return;
-    }
-    memcpy(mem_base + str_offset, value, len);
-    mem_base[str_offset + len] = '\0';
-  }
-  
-  /* Store string offset in array */
-  arr_data = (uint16_t *)(mem_base + arr_desc->data_offset);
-  arr_data[offset] = str_offset;
-  
-  #if VERBOSE
-    DEBUG_PRINTF("set_stringarray_element: id=%u$(%u", (unsigned)var_id, (unsigned)idx1);
-    if (arr_desc->dimensions >= 2) DEBUG_PRINTF(",%u", (unsigned)idx2);
-    if (arr_desc->dimensions >= 3) DEBUG_PRINTF(",%u", (unsigned)idx3);
-    DEBUG_PRINTF(") = '%s'\n", value);
-  #endif
-}
+
 /*---------------------------------------------------------------------------*/
 // end of string additions
-/*---------------------------------------------------------------------------*/
-void ubasic_set_out_function(out_func func) {
-  out_function = func;
-}
-/*---------------------------------------------------------------------------*/
-void ubasic_set_put_function(put_func func) {
-  put_function = func;
-}
-/*---------------------------------------------------------------------------*/
-void ubasic_set_in_function(in_func func) {
-  in_function = func;
-}
-/*---------------------------------------------------------------------------*/
-void ubasic_set_get_function(get_func func) {
-  get_function = func;
-}
 /*---------------------------------------------------------------------------*/
 static uint32_t gosub_pop(void) {
   int32_t ptr = *gosub_depth_cell;
@@ -3153,9 +1745,7 @@ static for_state for_pop(void) {
 static void push_statement(void) {
   int32_t depth;
   push_entry entry;
-
   accept(TOKENIZER_PUSH);
-
   if (tokenizer_stringlookahead()) {
     entry.type = 1;
     entry.ival = 0;
@@ -3168,14 +1758,13 @@ static void push_statement(void) {
   }
   if(ended) return;
   depth = *push_depth_cell;
-  if (depth < UBASIC_MAX_PUSH_STACK_DEPTH) {
+  if(depth < UBASIC_MAX_PUSH_STACK_DEPTH) {
     push_stack_mem[depth++] = entry;
     *push_depth_cell = depth;
   } else {
     runtime_error("PS", "PUSH stack overflow", current_line_number);
     return;
   }
-
   accept(TOKENIZER_LF);
 }
 /*---------------------------------------------------------------------------*/
@@ -3183,28 +1772,20 @@ static void pop_statement(void) {
   int32_t depth;
   int varnum;
   int is_string;
-
   accept(TOKENIZER_POP);
-
+  varnum = tokenizer_variable_num();
   if (tokenizer_token() == TOKENIZER_STRINGVARIABLE) {
     is_string = 1;
-    varnum = tokenizer_variable_num();
     accept(TOKENIZER_STRINGVARIABLE);
-  } else if (tokenizer_token() == TOKENIZER_VARIABLE) {
-    is_string = 0;
-    varnum = tokenizer_variable_num();
-    accept(TOKENIZER_VARIABLE);
   } else {
-    DEBUG_PRINTF("pop_statement: Expected variable after POP.\n");
-    runtime_error("TS", "POP requires variable target", current_line_number);
-    return;
+    is_string = 0;
+    accept(TOKENIZER_VARIABLE);
   }
   if(ended) return;
   depth = *push_depth_cell;
-  if (depth > 0) {
+  if(depth > 0) {
     push_entry entry = push_stack_mem[--depth];
     *push_depth_cell = depth;
-
     if (is_string) {
       if (entry.type != 1) {
         runtime_error("PT", "POP type mismatch", current_line_number);
@@ -3222,8 +1803,11 @@ static void pop_statement(void) {
     runtime_error("PS", "POP stack underflow", current_line_number);
     return;
   }
-
   accept(TOKENIZER_LF);
+}
+/*---------------------------------------------------------------------------*/
+void ubasic_set_out_function(out_func func) {
+  out_function = func;
 }
 /*---------------------------------------------------------------------------*/
 void ubasic_set_error_function(err_func func) {

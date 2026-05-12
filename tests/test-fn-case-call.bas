@@ -1,0 +1,5 @@
+5 DEF FNa(x)=INT(200*RND(10))+1
+10 DEF FNb(y)=y+1
+15 RANDOMIZE
+20 PRINT FNa(200); " "; FNb(5)
+40 END

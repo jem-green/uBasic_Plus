@@ -1,4 +1,4 @@
-uBASIC-plus: a more complex BASIC interpreter
+uBASIC-Math: a slightly more complex BASIC interpreter
 =======================================================
 
 http://dunkels.com/adam/ubasic/
@@ -11,9 +11,9 @@ Updated to enable uBasic to passed a basic file from the command line.
 
 http://www.zenoshrdlu.com/kapstuff/zsubasic.html
 
-Largely for fun I decided to add string handling. The version downloadable here is a stand-alone interpreter that does not include the CHDK enhancements (that version is here) so for example, all lines must have line numbers). It offers the following enhancements over Adam's original:
+Largely for fun I decided to add string handling. The version downloadable here is a stand-alone interpreter that does not include the CHDK enhancements (that version is here) so for example, all lines must have line numbers. It offers the following enhancements over Adam's original:
 
 https://github.com/jem-green/uBasic-Math
 
-Updated uBasic to support floating point variables and math functions
+Updated to support floating point maths and math functions. So added suport for SIN, COS, TAN, ATN, ABS, INT, SGN, SQR, RND, EXP, LOG.
 
