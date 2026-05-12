@@ -11,7 +11,8 @@ ucase = "A" | "B" | "C" | "D" | "E" | "F" | "G" | "H" | "I" | "J" | "K" | "L" | 
 lcase = "a" | "b" | "c" | "d" | "e" | "f" | "g" | "h" | "i" | "j" | "k" | "l" | "m" | "n" | "o" | "p" | "q" | "r" | "s" | "t" | "u" | "v" | "w" | "x" | "y" | "z" ;
 character = letter | digit | symbol ;
 symbol =  "|" | " " | "!" | "#" | "$" | "%" | "&" | "(" | ")" | "*" | "+" | "," | "-" | "." | "/" | ":" | ";" | "<" | "=" | ">" | "?" | "@" | "[" | "\" | "]" | "^" | "_" | "`" | "{" | "}" | "~" ;
-statement = change_statement | data_statement | def_statement | dim_statement | end_statement | for_statement | gosub_statement | goto_statement | if_statement | input_statement | let_statement | next_statement | on_statement | peek_statement | poke_statement | pop_statement | print_statement | push_statement | read_statement | rem_statement | restore_statement | return_statement ;
+statement = change_statement | data_statement | def_statement | dim_statement | end_statement | for_statement | gosub_statement | goto_statement | if_statement | input_statement | let_statement | next_statement | on_statement | peek_statement | poke_statement | pop_statement | print_statement | push_statement | read_statement | rem_statement | restore_statement | return_statement | randomize_statement ;
+randomize_statement = "RANDOMIZE" ;
 change_statement = "CHANGE" , ((string_variable , "TO" , numeric_variable) | (numeric_variable , "TO" , string_variable)) ;
 data_statement = "DATA" , constant , { "," , constant } ;
 constant = number | string ;
