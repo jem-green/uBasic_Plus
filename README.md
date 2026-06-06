@@ -15,5 +15,9 @@ Largely for fun I decided to add string handling. The version downloadable here 
 
 https://github.com/jem-green/uBasic-Math
 
-Updated uBasic to support floating point variables and math functions
+Updated to enable uBasic to passed a basic file from the command line. Updated to support floating point maths and math functions. So added suport for SIN, COS, TAN, ATN, ABS, INT, SGN, SQR, RND, EXP, LOG.
+
+https://github.com/jem-green/uBasic-Plus
+
+Updated to support DEF FN and RANDOMIZE
 
