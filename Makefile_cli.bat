@@ -1,1 +1,1 @@
-cl cli-ubasic.c ubasic.c tokenizer.c
+cl cli_ubasic.c ubasic.c tokenizer.c
