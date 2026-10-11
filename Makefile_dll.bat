@@ -1,0 +1,1 @@
+cl /BUILD_DLL /LD ubasic.c tokenizer.c

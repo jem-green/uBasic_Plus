@@ -28,6 +28,8 @@
  *
  */
  
+ #define BUILD_DLL
+ 
  /*
  * Modified to support simple string variables and functions by David Mitchell
  * November 2008.
@@ -139,14 +141,6 @@ typedef struct {
 #define UBASIC_MIN_MEMORY_BYTES \
   (UBASIC_MEM_PROGRAM_OFFSET + 1u + UBASIC_HEAP_BYTES + UBASIC_VARIABLES_SIZE + UBASIC_STRING_STATE_SIZE)
 
-// Possibly public
-
-void ubasic_init(uint8_t *memory, uint32_t memory_bytes);  /* Minimal init for snapshot restore */
-void ubasic_init_peek_poke(uint8_t *memory, uint32_t memory_bytes, peek_func peek, poke_func poke);
-void ubasic_reset(void);  /* Clears variables */
-void ubasic_run(void);
-int ubasic_finished(void);
-void ubasic_load_program(const char *program); /* Preserves vars */
 VARIABLE_TYPE ubasic_get_variable(int varnum);
 
 // string addition
@@ -154,7 +148,59 @@ char* get_stringvariable(int);
 void set_stringvariable(int, char *);
 // end of string addition
 
-/* I/O function setter */
+// Public
+
+#if defined(BUILD_DLL)
+
+// Main uBasic functions
+
+__declspec(dllexport) void ubasic_init(uint8_t *memory, uint32_t memory_bytes);
+__declspec(dllexport) void ubasic_reset(void); /* Clears variables */
+__declspec(dllexport) void ubasic_run(void);
+__declspec(dllexport) int ubasic_finished(void);
+__declspec(dllexport) void ubasic_load_program(const char *program);
+__declspec(dllexport) void ubasic_resume(void); /* Resume from saved tokenizer position */
+
+
+// Callbacks
+
+__declspec(dllexport) void ubasic_init_peek_poke(uint8_t *memory, uint32_t memory_bytes, peek_func peek, poke_func poke);
+__declspec(dllexport) void ubasic_set_peek_function(peek_func func);
+__declspec(dllexport) void ubasic_set_poke_function(poke_func func);
+
+// I/O function setters matching C# wrapper API
+
+__declspec(dllexport) void ubasic_set_out_function(out_func func);
+__declspec(dllexport) void ubasic_set_put_function(put_func func);
+__declspec(dllexport) void ubasic_set_in_function(in_func func);
+__declspec(dllexport) void ubasic_set_get_function(get_func func);
+__declspec(dllexport) void ubasic_set_error_function(err_func func);
+__declspec(dllexport) const char *ubasic_last_error_code(void);
+__declspec(dllexport) const char *ubasic_last_error_description(void);
+__declspec(dllexport) uint32_t ubasic_last_error_line(void);
+
+
+
+#else
+
+// Public
+
+// Main uBasic functions
+
+void ubasic_init(uint8_t *memory, uint32_t memory_bytes);  /* Minimal init for snapshot restore */
+void ubasic_reset(void);  /* Clears variables */
+void ubasic_run(void);
+int ubasic_finished(void);
+void ubasic_load_program(const char *program); /* Preserves vars */
+void ubasic_resume(void); /* Resume from saved tokenizer position */
+void ubasic_init_peek_poke(uint8_t *memory, uint32_t memory_bytes, peek_func peek, poke_func poke);
+void ubasic_set_peek_function(peek_func func);
+void ubasic_set_poke_function(poke_func func);
+
+// Callbacks
+
+// I/O function setters matching C# wrapper API
+
 void ubasic_set_out_function(out_func func);
 void ubasic_set_put_function(put_func func);
 void ubasic_set_in_function(in_func func);
@@ -163,5 +209,8 @@ void ubasic_set_error_function(err_func func);
 const char *ubasic_last_error_code(void);
 const char *ubasic_last_error_description(void);
 uint32_t ubasic_last_error_line(void);
+
+
+#endif
 
 #endif /* __UBASIC_H__ */
