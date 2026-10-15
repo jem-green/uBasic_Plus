@@ -7,6 +7,8 @@ Written in a couple of hours, for the fun of it. Ended up being used in a bunch 
 
 The (non-interactive) uBASIC interpreter supports only the most basic BASIC functionality: if/then/else, for/next, let, goto, gosub, print, and mathematical expressions. There is only support for integer variables and the variables can only have single character names. I have added an API that allows for the program that uses the uBASIC interpreter to get and set BASIC variables, so it might be possible to actually use the uBASIC code for something useful (e.g. a small scripting language for an application that has to be really small).
 
+https://github.com/jem-green/uBasic-Integer
+
 Updated to enable uBasic to passed a basic file from the command line. 
 
 http://www.zenoshrdlu.com/kapstuff/zsubasic.html
@@ -16,4 +18,11 @@ Largely for fun I decided to add string handling. The version downloadable here 
 https://github.com/jem-green/uBasic-Math
 
 Updated to support floating point maths and math functions. So added suport for SIN, COS, TAN, ATN, ABS, INT, SGN, SQR, RND, EXP, LOG.
+<<<<<<< HEAD
+=======
+
+https://github.com/jem-green/uBasic-Plus
+
+Updated to support DEF FN and RANDOMIZE
+>>>>>>> ecf21fa630ec4fcce968f107b3e18bf2840fe1d4
 

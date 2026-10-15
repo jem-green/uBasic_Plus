@@ -1,8 +1,9 @@
 program = line , { line } ;
-line = line_number , statement , lf ;
+line = line_number , statement , eol ;
 line_number = digit , { digit } ;
-digit = "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "0" ;
-number = integer | integer , "." , integer ;
+digit = "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" ;
+eol =  ( cr , lf ) | cr ;
+number = [ "-" ] , integer , [ "." , integer ] , [ ( "E" | "e" ) , [ "+" | "-" ] , integer ] ;
 integer = digit , { digit } ;
 cr = "\r" ; 
 lf = "\n" ;
@@ -11,13 +12,11 @@ ucase = "A" | "B" | "C" | "D" | "E" | "F" | "G" | "H" | "I" | "J" | "K" | "L" | 
 lcase = "a" | "b" | "c" | "d" | "e" | "f" | "g" | "h" | "i" | "j" | "k" | "l" | "m" | "n" | "o" | "p" | "q" | "r" | "s" | "t" | "u" | "v" | "w" | "x" | "y" | "z" ;
 character = letter | digit | symbol ;
 symbol =  "|" | " " | "!" | "#" | "$" | "%" | "&" | "(" | ")" | "*" | "+" | "," | "-" | "." | "/" | ":" | ";" | "<" | "=" | ">" | "?" | "@" | "[" | "\" | "]" | "^" | "_" | "`" | "{" | "}" | "~" ;
-statement = change_statement | data_statement | def_statement | dim_statement | end_statement | for_statement | gosub_statement | goto_statement | if_statement | input_statement | let_statement | next_statement | on_statement | peek_statement | poke_statement | pop_statement | print_statement | push_statement | read_statement | rem_statement | restore_statement | return_statement | randomize_statement ;
+statement = data_statement | def_statement | dim_statement | end_statement | for_statement | gosub_statement | goto_statement | if_statement | input_statement | let_statement | next_statement | on_statement | peek_statement | poke_statement | pop_statement | print_statement | push_statement | read_statement | rem_statement | restore_statement | return_statement | randomize_statement ;
 randomize_statement = "RANDOMIZE" ;
-change_statement = "CHANGE" , ((string_variable , "TO" , numeric_variable) | (numeric_variable , "TO" , string_variable)) ;
 data_statement = "DATA" , constant , { "," , constant } ;
 constant = number | string ;
 def_statement = "DEF FN" , lcase , "(" , variable , ")" , "=" , expression ;
-(* Arrays use 1-based indexing: DIM a(10) creates indices 1..10, not 0..9 *)
 dim_statement = "DIM" , variable , "(" , integer , [ "," , integer , [ "," , integer ] ] , ")" ;
 end_statement = "END" ;
 for_statement = "FOR" , numeric_variable , "=" , expression , "TO" , expression , [ "STEP" , expression ] ;
@@ -31,7 +30,7 @@ peek_statement = "PEEK" , expression , "," , numeric_variable ;
 poke_statement = "POKE" , expression , "," , expression ;
 on_statement = "ON" , expression , ("GOTO" | "GOSUB") , line_number , { "," , line_number } ;
 pop_statement = "POP" , variable ;
-print_statement = "PRINT" list , { ("," | ";") , list } ;
+print_statement = "PRINT" , list , { ( "," | ";" ) , list } ;
 push_statement = "PUSH" , ( expression | string | string_variable ) ;
 list = string | variable | expression | tab_function ;
 read_statement = "READ" , variable , { "," , variable } ;
@@ -45,14 +44,13 @@ variable = numeric_variable | string_variable ;
 numeric_variable = numeric_single_variable | numeric_array_variable ;
 string_variable = string_single_variable | string_array_variable;
 numeric_single_variable = lcase , [digit] ; 
-(* Array subscripts are 1-based: a(1), a(1,1), a(1,1,1) are valid for DIM a(N[,M[,P]]) *)
 numeric_array_variable = lcase , [digit] , "(" , expression , [ "," , expression , [ "," , expression ] ] , ")" ;
 string_single_variable = lcase , [digit] , "$"; 
 string_array_variable = lcase , [digit] , "$" , "(" , expression , [ "," , expression , [ "," , expression ] ] , ")" ;
 expression = [ "+" | "-" ] , term , { addop , term } ;
 addop = "+" | "-" ;
 term = factor , { mulop , factor } ;
-mulop = "*" | "/" | "%" | "MOD" ;
+mulop = "*" | "/" | "MOD" ;
 factor = primary , [ "^" , factor ] ;
 primary = number | string | variable | function | "(" , expression , ")" ;
 function = sin_function | cos_function | tan_function | arctan_function | exponent_function | absolute_function | logarithm_function | square_root_function | sign_function | def_function | integer_function | random_function  ;
@@ -71,10 +69,27 @@ sign_function = "SGN" , "(" , expression , ")" ;
 def_function = "FN" , lcase , "(" , variable , ")" ;
 integer_function = "INT" , "(" , expression , ")" ;
 random_function = "RND" , "(" , expression , ")" ;
-tab_function = "TAB" , "(" , expression , ")" ;
-
-
-
-
-
-
+string_expression = string_term , { "+" , string_term } ;
+string_term = string_literal | string_variable | string_function ;
+string_literal = '"' , { character } , '"' ;
+numeric_function = len_function | val_function | asc_function | instr_function ;
+len_function   = "LEN"   , "(" , string_expression , ")" ;
+val_function   = "VAL"   , "(" , string_expression , ")" ;
+asc_function   = "ASC"   , "(" , string_expression , ")" ;
+instr_function = "INSTR" , "(" , [ expression , "," ] , string_expression , "," , string_expression , ")" ;
+string_function = left_function | right_function | mid_function | str_function | chr_function ;
+left_function  = "LEFT$"  , "(" , string_expression , "," , expression , ")" ;
+right_function = "RIGHT$" , "(" , string_expression , "," , expression , ")" ;
+mid_function   = "MID$"   , "(" , string_expression , "," , expression , [ "," , expression ] , ")" ;
+str_function   = "STR$"   , "(" , expression , ")" ;
+chr_function   = "CHR$"   , "(" , expression , ")" ;
+	
+(* Notes:
+   - Numbers are doubles.
+   - Numeric variables are single lowercase letters (a-z); uppercase is not valid.
+   - String variables are a single lowercase letter followed by "$" (e.g. a$).
+   - ELSE and CALL are not supported keywords in this interpreter.
+   - Use IF ... THEN <statement> (single statement) and GOSUB/RETURN for subroutine flow.
+   - Strings are delimited by double quotes and are not allowed to contain newline in the tokenizer.
+   - The interpreter expects each statement to end with a line feed (LF).
+*)

@@ -31,14 +31,14 @@
 #include "ubasic.h"
 
 static const char program[] =
-"10 gosub 100\n\
-20 for i = 1 to 10\n\
-30 print i\n\
-40 next i\n\
-50 print \"end\"\n\
-60 end\n\
-100 print \"subroutine\"\n\
-110 return\n";
+"10 GOSUB 100\n\
+20 FOR i = 1 TO 10\n\
+30 PRINT i\n\
+40 NEXT i\n\
+50 PRINT \"end\"\n\
+60 END\n\
+100 PRINT \"subroutine\"\n\
+110 RETURN\n";
 
 /*---------------------------------------------------------------------------*/
 #define MEMORY_SIZE 4096
