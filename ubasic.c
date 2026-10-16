@@ -1066,17 +1066,40 @@ static int relation(void){
      op == TOKENIZER_GT ||
      op == TOKENIZER_EQ) {
     tokenizer_next();
+
+    // Handle combined operators like <=, >=, <>
+
+    if (op == TOKENIZER_LT && tokenizer_token() == TOKENIZER_GT) {
+      op = TOKENIZER_NE;
+      tokenizer_next();
+    } else if (op == TOKENIZER_LT && tokenizer_token() == TOKENIZER_EQ) {
+      op = TOKENIZER_LTE;
+      tokenizer_next();
+    } else if (op == TOKENIZER_GT && tokenizer_token() == TOKENIZER_EQ) {
+      op = TOKENIZER_GTE;
+      tokenizer_next();
+    }
+
     r2 = expr();
     DEBUG_PRINTF("relation: %g %d %g.\n", r1, op, r2);
     switch(op) {
     case TOKENIZER_LT:
       r1 = r1 < r2;
       break;
+    case TOKENIZER_LTE:
+      r1 = r1 <= r2;
+      break;
     case TOKENIZER_GT:
       r1 = r1 > r2;
       break;
+    case TOKENIZER_GTE:
+      r1 = r1 >= r2;
+      break;
     case TOKENIZER_EQ:
       r1 = r1 == r2;
+      break;
+    case TOKENIZER_NE:
+      r1 = r1 != r2;
       break;
     }
   }
