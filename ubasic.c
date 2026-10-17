@@ -42,7 +42,7 @@
 
 
  
-#define DEBUG 1
+#define DEBUG 0
 #define VERBOSE 0
 
 #if DEBUG
@@ -1394,17 +1394,28 @@ static void next_statement(void){
     if(var == (int)for_stack[*for_depth_cell - 1].for_variable_index) {
       DEBUG_PRINTF("next_statement: matching next for variable %d.\n", var);
       for_state top = for_stack[*for_depth_cell - 1];
-      set_variable(var, get_variable(var) + 1);
-      if(get_variable(var) <= top.to) {
+      VARIABLE_TYPE new_value = get_variable(var) + top.step;
+      set_variable(var, new_value);
+    
+	    /* Check loop condition based on step direction */
+	    int continue_loop;
+	    if (top.step >= 0) {
+	      continue_loop = (new_value <= top.to);
+	    } else {
+	      continue_loop = (new_value >= top.to);
+	    }
+      if(continue_loop) {
         jump_linenum(top.line_after_for);
       } else {
         for_pop();
         accept(TOKENIZER_LF);
       }
     } else {
-      DEBUG_PRINTF("next_statement: ERROR - non-matching next (expected %d, found %d).\n",
-          (int)for_stack[*for_depth_cell - 1].for_variable_index, var);
-      runtime_error("MN", "Non-matching NEXT", line);
+      if (*for_depth_cell > 0) {
+        DEBUG_PRINTF("next_statement: ERROR - non-matching next (expected %d, found %d).\n",
+            (int)for_stack[*for_depth_cell - 1].for_variable_index, var);
+        runtime_error("MN", "Non-matching NEXT", line);
+      }
     }
   } else {
     DEBUG_PRINTF("next_statement: ERROR - next without matching for.\n");
@@ -1414,7 +1425,8 @@ static void next_statement(void){
 }
 /*---------------------------------------------------------------------------*/
 static void for_statement(void) {
-  int for_variable, to;
+  int for_variable;
+  VARIABLE_TYPE to, step;
 
   accept(TOKENIZER_FOR);
   for_variable = tokenizer_variable_num();
@@ -1423,6 +1435,15 @@ static void for_statement(void) {
   set_variable(for_variable, expr());
   accept(TOKENIZER_TO);
   to = expr();
+  
+  /* Optional STEP parameter, defaults to 1 */
+  if (tokenizer_token() == TOKENIZER_STEP) {
+    accept(TOKENIZER_STEP);
+    step = expr();
+  } else {
+    step = 1;
+  }
+  
   accept(TOKENIZER_LF);
 
   for_state st;
@@ -1434,11 +1455,11 @@ static void for_statement(void) {
     st.line_after_for = 0;
   }
   st.for_variable_index = (int32_t)for_variable;
-  st.to = (int32_t)to;
+  st.to = (VARIABLE_TYPE)to;
+  st.step = (VARIABLE_TYPE)step;
   for_push(st);
   #if VERBOSE
-    DEBUG_PRINTF("for_statement: new for, var %d to %d, line_after_for=%u.\n",
-                 (int)st.for_variable_index, (int)st.to, st.line_after_for);
+    DEBUG_PRINTF("for_statement: new for, var %d to %d step %d.\n", (int)st.for_variable_index, (int)st.to, (int)st.step);
   #endif
   
 }

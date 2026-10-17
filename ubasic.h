@@ -93,7 +93,8 @@ typedef void (*err_func)(const char *code, const char *description, uint32_t lin
 typedef struct for_state {
   uint32_t line_after_for;
   int32_t for_variable_index; /* 0..25 (a-z) */
-  int32_t to;
+  VARIABLE_TYPE to;
+  VARIABLE_TYPE step;
 } for_state;
 
 typedef struct push_entry {

@@ -114,7 +114,8 @@ enum {
   TOKENIZER_INSTR,
   TOKENIZER_ASC,
   // end of string additions
-  TOKENIZER_RANDOMIZE
+  TOKENIZER_RANDOMIZE,
+  TOKENIZER_STEP
 };
 
 // Public

@@ -1,0 +1,7 @@
+10 LET j=10
+20 LET k=0.5
+30 FOR i=k TO j/k STEP k
+40 PRINT "i=";i
+50 NEXT i
+60 PRINT "DONE"
+70 END
