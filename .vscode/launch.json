@@ -5,7 +5,7 @@
       "name": "Debug with cl.exe",
       "type": "cppvsdbg",
       "request": "launch",
-      "program": "${workspaceFolder}/ubasic.exe",
+      "program": "${workspaceFolder}/ubasicd.exe",
       "args": [],
       "stopAtEntry": false,
       "cwd": "${workspaceFolder}",

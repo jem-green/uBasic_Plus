@@ -171,8 +171,8 @@ static const struct keyword_token tokens[] = {
   {"TOKENIZER_LEN",TOKENIZER_LEN},
   {"TOKENIZER_INSTR",TOKENIZER_INSTR},
   {"TOKENIZER_ASC",TOKENIZER_ASC},
-    {"TOKENIZER_DEF",TOKENIZER_DEF},
-    {"TOKENIZER_FN",TOKENIZER_FN},
+  {"TOKENIZER_DEF",TOKENIZER_DEF},
+  {"TOKENIZER_FN",TOKENIZER_FN},
   {"TOKENIZER_RANDOMIZE",TOKENIZER_RANDOMIZE},
   {NULL, TOKENIZER_ERROR}
 };
@@ -201,8 +201,11 @@ static int singlechar(void){
     return TOKENIZER_MOD;
   } else if(*ptr == '(') {
     return TOKENIZER_LEFTPAREN;
+	
   } else if(*ptr == '#') {
+  
     return TOKENIZER_HASH;
+	
   } else if(*ptr == ')') {
     return TOKENIZER_RIGHTPAREN;
   } else if(*ptr == '<') {
@@ -211,8 +214,11 @@ static int singlechar(void){
     return TOKENIZER_GT;
   } else if(*ptr == '=') {
     return TOKENIZER_EQ;
+	
   } else if(*ptr == '^') {
+  
     return TOKENIZER_POWER;
+	
   }
   return 0;
 }

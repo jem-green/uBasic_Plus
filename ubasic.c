@@ -42,7 +42,7 @@
 
 
  
-#define DEBUG 0
+#define DEBUG 1
 #define VERBOSE 0
 
 #if DEBUG
@@ -987,7 +987,7 @@ static VARIABLE_TYPE term(void) {
      op == TOKENIZER_MOD) {
      tokenizer_next();
      f2 = factor();
-     DEBUG_PRINTF("term: %g %d %g\n", f1, op, f2);
+     DEBUG_PRINTF("term: %g %s %g\n", f1, tokenizer_token_name(op), f2);
      switch(op) {
        case TOKENIZER_ASTR:
         f1 = f1 * f2;
@@ -1040,7 +1040,7 @@ static VARIABLE_TYPE expr(void){
        op == TOKENIZER_MINUS) {
     tokenizer_next();
     t2 = term();
-    DEBUG_PRINTF("expr: %g %d %g.\n", t1, op, t2);
+    DEBUG_PRINTF("expr: %g %s %g.\n", t1, tokenizer_token_name(op), t2);
     switch(op) {
     case TOKENIZER_PLUS:
       t1 = t1 + t2;
@@ -1061,7 +1061,7 @@ static int relation(void){
 
   r1 = expr();
   op = tokenizer_token();
-  DEBUG_PRINTF("relation: token %d.\n", op);
+  DEBUG_PRINTF("relation: token %s.\n", tokenizer_token_name(op));
   if(op == TOKENIZER_LT ||
      op == TOKENIZER_GT ||
      op == TOKENIZER_EQ) {
@@ -1081,7 +1081,7 @@ static int relation(void){
     }
 
     r2 = expr();
-    DEBUG_PRINTF("relation: %g %d %g.\n", r1, op, r2);
+    DEBUG_PRINTF("relation: %g %s %g.\n", r1, tokenizer_token_name(op), r2);
     switch(op) {
     case TOKENIZER_LT:
       r1 = r1 < r2;
@@ -1108,7 +1108,7 @@ static int relation(void){
         op == TOKENIZER_OR) {
     tokenizer_next();
     r2 = relation();
-    DEBUG_PRINTF("relation: %g %d %g.\n", r1, op, r2);
+    DEBUG_PRINTF("relation: %g %s %g.\n", r1, tokenizer_token_name(op), r2);
     switch(op) {
     case TOKENIZER_AND:
       r1 = r1 && r2;
