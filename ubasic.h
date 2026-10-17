@@ -107,7 +107,8 @@ typedef struct push_entry {
 #define UBASIC_MEM_RESUME_OFFSET      0
 #define UBASIC_MEM_GOSUB_DEPTH_OFFSET 4
 #define UBASIC_MEM_FOR_DEPTH_OFFSET   8
-#define UBASIC_MEM_GOSUB_STACK_OFFSET 12
+#define UBASIC_MEM_DATA_PTR_OFFSET    12
+#define UBASIC_MEM_GOSUB_STACK_OFFSET 16
 #define UBASIC_MEM_FOR_STACK_OFFSET \
   (UBASIC_MEM_GOSUB_STACK_OFFSET + UBASIC_MAX_GOSUB_STACK_DEPTH * (int)sizeof(int32_t))
 /* PUSH/POP stack: depth cell + typed push_entry slots */

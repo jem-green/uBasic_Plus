@@ -76,6 +76,9 @@ enum {
   TOKENIZER_ON,
   TOKENIZER_PUSH,
   TOKENIZER_POP,
+  TOKENIZER_READ,
+  TOKENIZER_DATA,
+  TOKENIZER_RESTORE,
 
   //Functions and operators
 

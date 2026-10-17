@@ -36,4 +36,5 @@
 410 PRINT "V1=";d,"V2=";e,"V3=";f
 420 PRINT "="
 440 PRINT "All tests completed"
-450 END
+450 RESTORE
+460 END
