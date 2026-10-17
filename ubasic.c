@@ -1238,6 +1238,74 @@ static void goto_statement(void) {
   jump_linenum(tokenizer_linenum());
 }
 /*---------------------------------------------------------------------------*/
+static void on_statement(void) {
+  int index;
+  int line_numbers[20];
+  int count = 0;
+  int is_gosub;
+  
+  accept(TOKENIZER_ON);
+  
+  /* Evaluate expression to get index (1-based) */
+  index = expr();
+  
+  /* Determine if GOTO or GOSUB */
+  if (tokenizer_token() == TOKENIZER_GOTO) {
+    accept(TOKENIZER_GOTO);
+    is_gosub = 0;
+  } else if (tokenizer_token() == TOKENIZER_GOSUB) {
+    accept(TOKENIZER_GOSUB);
+    is_gosub = 1;
+  } else {
+    DEBUG_PRINTF("on_statement: Expected GOTO or GOSUB.\n");
+    runtime_error("TS", "Unsupported statement", current_line_number);
+    ended = 1;
+    return;
+  }
+  
+  /* Parse comma-separated list of line numbers */
+  // This is hardcoded to a maximum of 20 line numbers for simplicity.
+  // In a more robust implementation, this could continue until a \n
+
+  while (count < 20 && tokenizer_token() == TOKENIZER_NUMBER) {
+    line_numbers[count] = tokenizer_linenum();
+    count++;
+    accept(TOKENIZER_NUMBER);
+    
+    if (tokenizer_token() == TOKENIZER_COMMA) {
+      accept(TOKENIZER_COMMA);
+    } else {
+      break;
+    }
+  }
+  
+  // Unless all the entries are consumed we are left mid statement,
+  //  so we need to consume the rest of the line
+
+  accept(TOKENIZER_LF);
+  
+  /* Execute if index is in valid range (1-based) */
+  if (index >= 1 && index <= count) {
+    uint32_t target_line = line_numbers[index - 1];
+    
+    if (is_gosub) {
+      /* GOSUB: push return address and jump */
+      if (*gosub_depth_cell < UBASIC_MAX_GOSUB_STACK_DEPTH) {
+        gosub_push(tokenizer_linenum());
+        jump_linenum(target_line);
+      } else {
+        DEBUG_PRINTF("on_statement: gosub stack exhausted.\n");
+        runtime_error("GS", "GOSUB stack overflow", current_line_number);
+      }
+    } else {
+      /* GOTO: just jump */
+      jump_linenum(target_line);
+    }
+  }
+  /* If index out of range, continue to next statement (do nothing) */
+  
+  DEBUG_PRINTF("on_statement: index=%d, count=%d, is_gosub=%d\n", index, count, is_gosub);
+}
 static void print_statement(void) {
   // string additions - buffer for complete line
   static char buf[128];
@@ -1600,6 +1668,9 @@ static void statement(void){
     break;
   case TOKENIZER_RANDOMIZE:
     randomize_statement();
+    break;
+  case TOKENIZER_ON:
+    on_statement();
     break;
   case TOKENIZER_PUSH:
     push_statement();
