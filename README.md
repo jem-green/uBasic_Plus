@@ -18,11 +18,13 @@ Largely for fun I decided to add string handling. The version downloadable here 
 https://github.com/jem-green/uBasic-Math
 
 Updated to support floating point maths and math functions. So added suport for SIN, COS, TAN, ATN, ABS, INT, SGN, SQR, RND, EXP, LOG.
-<<<<<<< HEAD
-=======
+
+https://github.com/mkostrun/UBASIC-PLUS
+
+Reviewed enhanced version proposed to support Plus extension by Marijan Kostrun 2018.
 
 https://github.com/jem-green/uBasic-Plus
 
 Updated to support DEF FN and RANDOMIZE
->>>>>>> ecf21fa630ec4fcce968f107b3e18bf2840fe1d4
+
 

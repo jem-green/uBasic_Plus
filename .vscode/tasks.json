@@ -6,8 +6,11 @@
       "type": "shell",
       "command": "cl.exe",
       "args": [
-        "/Feubasic", "/Zi", "/EHsc", "cli-ubasic.c","ubasic.c","tokenizer.c"
+        "/Feubasicd", "/Zi", "/EHsc", "cli-ubasic.c","ubasic.c","tokenizer.c"
       ],
+        "options": {
+        "cwd": "${workspaceFolder}"
+      },
       "group": {
         "kind": "build",
         "isDefault": true
