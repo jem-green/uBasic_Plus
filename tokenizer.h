@@ -79,6 +79,7 @@ enum {
   TOKENIZER_READ,
   TOKENIZER_DATA,
   TOKENIZER_RESTORE,
+  TOKENIZER_INPUT,
 
   //Functions and operators
 

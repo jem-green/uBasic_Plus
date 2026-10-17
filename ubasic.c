@@ -154,9 +154,23 @@ static void default_out_function(const char *message) {
   printf("%s", message);
 }
 
+static void default_put_function(char character) {
+  putchar(character);
+}
+
+static void default_in_function(char *buffer, size_t max_len) {
+  if (fgets(buffer, (int)max_len, stdin) == NULL) {
+    buffer[0] = '\0';  /* EOF or error, return empty string */
+  }
+}
+
+static char default_get_function(void) {
+  return (char)getchar();
+}
+
 out_func out_function = default_out_function;  /* Default to printf wrapper */
-put_func put_function = NULL;
-in_func in_function = NULL;
+put_func put_function = default_put_function;  /* Default to putchar wrapper */
+in_func in_function = default_in_function;  /* Default to fgets wrapper */
 get_func get_function = NULL;
 
 /* Error handling function pointers and state */
@@ -1367,6 +1381,117 @@ static void print_statement(void) {
   tokenizer_next();
 }
 /*---------------------------------------------------------------------------*/
+static void input_statement(void) {
+  static char input_buf[256];
+  char *input_ptr;
+  char *token_start;
+  int var;
+  int is_string;
+  int has_prompt = 0;
+  
+  accept(TOKENIZER_INPUT);
+  
+  /* Check for optional prompt string */
+  if (tokenizer_token() == TOKENIZER_STRING) {
+    tokenizer_string(string, sizeof(string));
+    out_function(string);
+    has_prompt = 1;
+    accept(TOKENIZER_STRING);
+    
+    /* Prompt can be followed by semicolon or comma */
+    if (tokenizer_token() == TOKENIZER_SEMICOLON) {
+      accept(TOKENIZER_SEMICOLON);
+    } else if (tokenizer_token() == TOKENIZER_COMMA) {
+      accept(TOKENIZER_COMMA);
+    }
+    
+    /* Always add ? prompt after custom prompt */
+    out_function("? ");
+  } else {
+    /* Show default prompt if no custom prompt */
+    out_function("? ");
+  }
+  
+  /* Read input line */
+  in_function(input_buf, sizeof(input_buf));
+  input_ptr = input_buf;
+  
+  DEBUG_PRINTF("input_statement: Read input '%s'\n", input_buf);
+  
+  /* Parse variables and assign values */
+  do {
+    /* Determine variable type */
+    if (tokenizer_token() == TOKENIZER_VARIABLE) {
+      var = tokenizer_variable_num();
+      is_string = 0;
+      accept(TOKENIZER_VARIABLE);
+    } else if (tokenizer_token() == TOKENIZER_STRINGVARIABLE) {
+      var = tokenizer_variable_num();
+      is_string = 1;
+      accept(TOKENIZER_STRINGVARIABLE);
+    } else {
+      DEBUG_PRINTF("input_statement: Expected variable.\n");
+      ended = 1;
+      return;
+    }
+    
+    /* Skip leading whitespace in input */
+    while (*input_ptr == ' ' || *input_ptr == '\t') {
+      input_ptr++;
+    }
+    
+    /* Parse value from input */
+    if (is_string) {
+      /* String variable - read until comma or end */
+      token_start = input_ptr;
+      while (*input_ptr != ',' && *input_ptr != '\0') {
+        input_ptr++;
+      }
+      
+      /* Copy string value */
+      if (input_ptr > token_start) {
+        size_t len = input_ptr - token_start;
+        if (len > MAX_STRINGVARLEN) {
+          len = MAX_STRINGVARLEN;
+        }
+        memcpy(string, token_start, len);
+        string[len] = '\0';
+        
+        /* Trim trailing whitespace */
+        while (len > 0 && (string[len-1] == ' ' || string[len-1] == '\t' || string[len-1] == '\r' || string[len-1] == '\n')) {
+          len--;
+          string[len] = '\0';
+        }
+        
+        set_stringvariable(var, string);
+      } else {
+        set_stringvariable(var, "");
+      }
+    } else {
+      /* Numeric variable */
+      VARIABLE_TYPE value;
+      value = strtod(input_ptr, &input_ptr);
+      set_variable(var, value);
+    }
+    
+    /* Skip comma in input if present */
+    if (*input_ptr == ',') {
+      input_ptr++;
+    }
+    
+    /* Check for more variables */
+    if (tokenizer_token() == TOKENIZER_COMMA) {
+      accept(TOKENIZER_COMMA);
+    } else {
+      break;
+    }
+  } while (tokenizer_token() != TOKENIZER_LF && 
+           tokenizer_token() != TOKENIZER_ENDOFINPUT);
+  
+  accept(TOKENIZER_LF);
+  DEBUG_PRINTF("input_statement: Input complete.\n");
+}
+/*---------------------------------------------------------------------------*/
 static void data_statement(void){
   /* DATA statement - skip during normal execution */
   accept(TOKENIZER_DATA);
@@ -1886,6 +2011,9 @@ static void statement(void){
     break;
   case TOKENIZER_IF:
     if_statement();
+    break;
+  case TOKENIZER_INPUT:
+    input_statement();
     break;
   case TOKENIZER_GOTO:
     goto_statement();

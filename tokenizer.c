@@ -91,16 +91,17 @@ static const struct keyword_token keywords[] = {
   {"OR",                      TOKENIZER_OR},
   {"MOD",                     TOKENIZER_MOD},
 // end of math functions
+// data statements
   {"READ",                    TOKENIZER_READ},
   {"DATA",                    TOKENIZER_DATA},
   {"RESTORE",                 TOKENIZER_RESTORE},
- 
-
+ // enf of data statements
+// statements
   {"LET", TOKENIZER_LET},
   {"PRINT", TOKENIZER_PRINT},
   {"IF", TOKENIZER_IF},
   {"THEN", TOKENIZER_THEN},
-
+  {"INPUT", TOKENIZER_INPUT},
   {"FOR", TOKENIZER_FOR},
   {"TO", TOKENIZER_TO},
   {"STEP", TOKENIZER_STEP},
@@ -116,6 +117,7 @@ static const struct keyword_token keywords[] = {
   {"PUSH", TOKENIZER_PUSH},
   {"POP", TOKENIZER_POP},
   {"RANDOMIZE", TOKENIZER_RANDOMIZE},
+  // end of statements
   {NULL, TOKENIZER_ERROR}
 };
 
@@ -139,16 +141,16 @@ static const struct keyword_token tokens[] = {
   {"TOKENIZER_READ",TOKENIZER_READ},
   {"TOKENIZER_DATA",TOKENIZER_DATA},
   {"TOKENIZER_RESTORE",TOKENIZER_RESTORE},
-
+  {"TOKENIZER_INPUT",TOKENIZER_INPUT},
 	{"TOKENIZER_LET",TOKENIZER_LET},
 	{"TOKENIZER_PRINT",TOKENIZER_PRINT},
 	{"TOKENIZER_IF",TOKENIZER_IF},
 	{"TOKENIZER_THEN",TOKENIZER_THEN},
 	{"TOKENIZER_FOR",TOKENIZER_FOR},
 	{"TOKENIZER_TO",TOKENIZER_TO},
-    {"TOKENIZER_STEP",TOKENIZER_STEP},
+  {"TOKENIZER_STEP",TOKENIZER_STEP},
 	{"TOKENIZER_NEXT",TOKENIZER_NEXT},
-    {"TOKENIZER_ON",TOKENIZER_ON},
+  {"TOKENIZER_ON",TOKENIZER_ON},
 	{"TOKENIZER_GOTO",TOKENIZER_GOTO},
 	{"TOKENIZER_GOSUB",TOKENIZER_GOSUB},
 	{"TOKENIZER_RETURN",TOKENIZER_RETURN},
@@ -158,8 +160,8 @@ static const struct keyword_token tokens[] = {
 	{"TOKENIZER_END",TOKENIZER_END},
 	{"TOKENIZER_PUSH",TOKENIZER_PUSH},
 	{"TOKENIZER_POP",TOKENIZER_POP},
-    {"TOKENIZER_RANDOMIZE",TOKENIZER_RANDOMIZE},
-    {"TOKENIZER_DEF",TOKENIZER_DEF},
+  {"TOKENIZER_RANDOMIZE",TOKENIZER_RANDOMIZE},
+  {"TOKENIZER_DEF",TOKENIZER_DEF},
 
   // Operators and punctuation
 

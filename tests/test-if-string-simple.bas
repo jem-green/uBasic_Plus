@@ -1,0 +1,6 @@
+10 REM String comparison test
+20 LET i$ = "Y"
+30 IF i$="Y" THEN GOTO 50
+40 PRINT "FAILED"
+50 PRINT "SUCCESS"
+60 END
