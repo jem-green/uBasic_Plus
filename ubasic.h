@@ -93,7 +93,8 @@ typedef void (*err_func)(const char *code, const char *description, uint32_t lin
 typedef struct for_state {
   uint32_t line_after_for;
   int32_t for_variable_index; /* 0..25 (a-z) */
-  int32_t to;
+  VARIABLE_TYPE to;
+  VARIABLE_TYPE step;
 } for_state;
 
 typedef struct push_entry {
@@ -106,7 +107,8 @@ typedef struct push_entry {
 #define UBASIC_MEM_RESUME_OFFSET      0
 #define UBASIC_MEM_GOSUB_DEPTH_OFFSET 4
 #define UBASIC_MEM_FOR_DEPTH_OFFSET   8
-#define UBASIC_MEM_GOSUB_STACK_OFFSET 12
+#define UBASIC_MEM_DATA_PTR_OFFSET    12
+#define UBASIC_MEM_GOSUB_STACK_OFFSET 16
 #define UBASIC_MEM_FOR_STACK_OFFSET \
   (UBASIC_MEM_GOSUB_STACK_OFFSET + UBASIC_MAX_GOSUB_STACK_DEPTH * (int)sizeof(int32_t))
 /* PUSH/POP stack: depth cell + typed push_entry slots */

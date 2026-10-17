@@ -42,7 +42,7 @@
 
 
  
-#define DEBUG 1
+#define DEBUG 0
 #define VERBOSE 0
 
 #if DEBUG
@@ -71,7 +71,10 @@ typedef void (*poke_func)(VARIABLE_TYPE, VARIABLE_TYPE);
 static VARIABLE_TYPE expr(void);
 static void line_statement(void);
 static void statement(void);
+static void data_statement(void);
 static void def_statement(void);
+static void restore_statement(void);
+static void read_statement(void);
 static void index_free(void);
 static void reset_control_state(void);
 static VARIABLE_TYPE expr(void);
@@ -94,11 +97,12 @@ static size_t mem_capacity_bytes = 0;
 static int32_t *resume_offset_cell = NULL;
 static int32_t *gosub_depth_cell = NULL;
 static int32_t *for_depth_cell = NULL;
+static int32_t *data_ptr_cell = NULL;
 static int32_t *gosub_stack_mem = NULL;
 static for_state *for_stack = NULL;
-static VARIABLE_TYPE *variables_mem = NULL;
 static int32_t *push_depth_cell = NULL;
 static push_entry *push_stack_mem = NULL;
+static VARIABLE_TYPE *variables_mem = NULL;
 
 typedef struct {
   uint16_t param_var;      /* Parameter variable number (0..25) */
@@ -200,6 +204,7 @@ void ubasic_init(uint8_t *memory, uint32_t memory_bytes) {
   resume_offset_cell = (int32_t *)(memory + UBASIC_MEM_RESUME_OFFSET);
   gosub_depth_cell = (int32_t *)(memory + UBASIC_MEM_GOSUB_DEPTH_OFFSET);
   for_depth_cell = (int32_t *)(memory + UBASIC_MEM_FOR_DEPTH_OFFSET);
+  data_ptr_cell = (int32_t *)(memory + UBASIC_MEM_DATA_PTR_OFFSET);
   gosub_stack_mem = (int32_t *)(memory + UBASIC_MEM_GOSUB_STACK_OFFSET);
   for_stack = (for_state *)(memory + UBASIC_MEM_FOR_STACK_OFFSET);
   push_depth_cell = (int32_t *)(memory + UBASIC_MEM_PUSH_DEPTH_OFFSET);
@@ -233,6 +238,9 @@ static void reset_control_state(void) {
   }
   if (for_depth_cell != NULL) {
     *for_depth_cell = 0;
+  }
+  if (data_ptr_cell != NULL) {
+    *data_ptr_cell = 0;
   }
   if (gosub_stack_mem != NULL) {
     memset(gosub_stack_mem, 0, UBASIC_MAX_GOSUB_STACK_DEPTH * sizeof(int32_t));
@@ -1238,6 +1246,74 @@ static void goto_statement(void) {
   jump_linenum(tokenizer_linenum());
 }
 /*---------------------------------------------------------------------------*/
+static void on_statement(void) {
+  int index;
+  int line_numbers[20];
+  int count = 0;
+  int is_gosub;
+  
+  accept(TOKENIZER_ON);
+  
+  /* Evaluate expression to get index (1-based) */
+  index = expr();
+  
+  /* Determine if GOTO or GOSUB */
+  if (tokenizer_token() == TOKENIZER_GOTO) {
+    accept(TOKENIZER_GOTO);
+    is_gosub = 0;
+  } else if (tokenizer_token() == TOKENIZER_GOSUB) {
+    accept(TOKENIZER_GOSUB);
+    is_gosub = 1;
+  } else {
+    DEBUG_PRINTF("on_statement: Expected GOTO or GOSUB.\n");
+    runtime_error("TS", "Unsupported statement", current_line_number);
+    ended = 1;
+    return;
+  }
+  
+  /* Parse comma-separated list of line numbers */
+  // This is hardcoded to a maximum of 20 line numbers for simplicity.
+  // In a more robust implementation, this could continue until a \n
+
+  while (count < 20 && tokenizer_token() == TOKENIZER_NUMBER) {
+    line_numbers[count] = tokenizer_linenum();
+    count++;
+    accept(TOKENIZER_NUMBER);
+    
+    if (tokenizer_token() == TOKENIZER_COMMA) {
+      accept(TOKENIZER_COMMA);
+    } else {
+      break;
+    }
+  }
+  
+  // Unless all the entries are consumed we are left mid statement,
+  //  so we need to consume the rest of the line
+
+  accept(TOKENIZER_LF);
+  
+  /* Execute if index is in valid range (1-based) */
+  if (index >= 1 && index <= count) {
+    uint32_t target_line = line_numbers[index - 1];
+    
+    if (is_gosub) {
+      /* GOSUB: push return address and jump */
+      if (*gosub_depth_cell < UBASIC_MAX_GOSUB_STACK_DEPTH) {
+        gosub_push(tokenizer_linenum());
+        jump_linenum(target_line);
+      } else {
+        DEBUG_PRINTF("on_statement: gosub stack exhausted.\n");
+        runtime_error("GS", "GOSUB stack overflow", current_line_number);
+      }
+    } else {
+      /* GOTO: just jump */
+      jump_linenum(target_line);
+    }
+  }
+  /* If index out of range, continue to next statement (do nothing) */
+  
+  DEBUG_PRINTF("on_statement: index=%d, count=%d, is_gosub=%d\n", index, count, is_gosub);
+}
 static void print_statement(void) {
   // string additions - buffer for complete line
   static char buf[128];
@@ -1289,6 +1365,298 @@ static void print_statement(void) {
   out_function("\n");
   DEBUG_PRINTF("print_statement: End of print.\n");
   tokenizer_next();
+}
+/*---------------------------------------------------------------------------*/
+static void data_statement(void){
+  /* DATA statement - skip during normal execution */
+  accept(TOKENIZER_DATA);
+  DEBUG_PRINTF("data_statement: Skipping DATA.\n");
+  tokenizer_skip();
+}
+/*---------------------------------------------------------------------------*/
+static void restore_statement(void){
+  /* RESTORE statement - reset DATA pointer to start of program */
+  accept(TOKENIZER_RESTORE);
+  accept(TOKENIZER_LF);
+  
+  *data_ptr_cell = 0;  /* Reset to program start */
+  DEBUG_PRINTF("restore_statement: DATA pointer reset to start.\n");
+}
+/*---------------------------------------------------------------------------*/
+static void def_statement(void) {
+  /* DEF FN statement - define a user function
+   * Syntax: DEF FN letter(variable) = expression
+   */
+  int func_index;
+  int param_var;
+  const char *expr_start_ptr;
+  const char *expr_end_ptr;
+  uint16_t expr_start_offset;
+  uint16_t expr_end_offset;
+
+  accept(TOKENIZER_DEF);
+  accept(TOKENIZER_FN);
+  
+  /* Get function letter (A-Z) - tokenizer sees it as a variable */
+  #if DEBUG
+    DEBUG_PRINTF("def_statement: Next token is '%s'\n", tokenizer_token_name(tokenizer_token()));
+  #endif
+  
+  if (tokenizer_token() != TOKENIZER_VARIABLE) {
+    runtime_error("TS", "Expected function name in DEF FN", current_line_number);
+    return;
+  }
+  
+  /* Function names remain single-letter (a-z only). */
+  func_index = tokenizer_variable_num();
+  if (func_index < 0 || func_index >= MAX_FN_DEFS) {
+    runtime_error("TS", "Invalid DEF FN function name", current_line_number);
+    return;
+  }
+  accept(TOKENIZER_VARIABLE);
+
+  accept(TOKENIZER_LEFTPAREN);
+  if (tokenizer_token() != TOKENIZER_VARIABLE) {
+    runtime_error("TS", "Expected DEF FN parameter", current_line_number);
+    return;
+  }
+  param_var = tokenizer_variable_num();
+  if (param_var < 0 || param_var >= UBASIC_VARIABLE_COUNT) {
+    runtime_error("TS", "Invalid DEF FN parameter", current_line_number);
+    return;
+  }
+  accept(TOKENIZER_VARIABLE);
+  accept(TOKENIZER_RIGHTPAREN);
+  accept(TOKENIZER_EQ);
+
+  expr_start_ptr = tokenizer_pos();
+  while (tokenizer_token() != TOKENIZER_LF &&
+         tokenizer_token() != TOKENIZER_CR &&
+         tokenizer_token() != TOKENIZER_ENDOFINPUT) {
+    tokenizer_next();
+  }
+  expr_end_ptr = tokenizer_pos();
+
+  expr_start_offset = (uint16_t)(expr_start_ptr - program_ptr);
+  expr_end_offset = (uint16_t)(expr_end_ptr - program_ptr);
+
+  fn_table[func_index].param_var = (uint16_t)param_var;
+  fn_table[func_index].expr_start = expr_start_offset;
+  fn_table[func_index].expr_end = expr_end_offset;
+  fn_table[func_index].defined = 1;
+
+  accept(TOKENIZER_LF);
+}
+/*---------------------------------------------------------------------------*/
+static void read_statement(void){
+  /* READ statement - read values from DATA statements
+   * Based on C# working implementation:
+   * 1. Save current tokenizer position
+   * 2. Initialize tokenizer at data_ptr offset
+   * 3. Search forward for next DATA statement
+   * 4. Read the next value from DATA
+   * 5. Update data_ptr offset
+   * 6. Restore tokenizer position
+   */
+  const char *saved_pos;
+  const char *data_pos;
+  int var;
+  uint16_t idx1 = 0, idx2 = 0, idx3 = 0;
+  int is_array = 0;
+  int is_string = 0;
+  VARIABLE_TYPE value;
+  char str_value[MAX_STRINGLEN];
+  int found_data;
+  
+  DEBUG_PRINTF("read_statement: Starting READ statement.\n");
+  accept(TOKENIZER_READ);
+  
+  /* Loop through variables to read */
+  do {
+    is_array = 0;
+    is_string = 0;
+    found_data = 0;
+    
+    /* Determine variable type */
+    if (tokenizer_token() == TOKENIZER_STRINGVARIABLE) {
+      is_string = 1;
+      var = tokenizer_variable_num();
+      accept(TOKENIZER_STRINGVARIABLE);
+      
+      /* Check for string array indexing */
+      if (tokenizer_token() == TOKENIZER_LEFTPAREN) {
+        is_array = 1;
+        accept(TOKENIZER_LEFTPAREN);
+        idx1 = (uint16_t)expr();
+        if (tokenizer_token() == TOKENIZER_COMMA) {
+          accept(TOKENIZER_COMMA);
+          idx2 = (uint16_t)expr();
+          if (tokenizer_token() == TOKENIZER_COMMA) {
+            accept(TOKENIZER_COMMA);
+            idx3 = (uint16_t)expr();
+          }
+        }
+        accept(TOKENIZER_RIGHTPAREN);
+      }
+    } else if (tokenizer_token() == TOKENIZER_VARIABLE) {
+      var = tokenizer_variable_num();
+      accept(TOKENIZER_VARIABLE);
+      
+      /* Check for array indexing */
+      if (tokenizer_token() == TOKENIZER_LEFTPAREN) {
+        is_array = 1;
+        accept(TOKENIZER_LEFTPAREN);
+        idx1 = (uint16_t)expr();
+        if (tokenizer_token() == TOKENIZER_COMMA) {
+          accept(TOKENIZER_COMMA);
+          idx2 = (uint16_t)expr();
+          if (tokenizer_token() == TOKENIZER_COMMA) {
+            accept(TOKENIZER_COMMA);
+            idx3 = (uint16_t)expr();
+          }
+        }
+        accept(TOKENIZER_RIGHTPAREN);
+      }
+    } else {
+      DEBUG_PRINTF("read_statement: Expected variable\n");
+      exit(1);
+    }
+    
+    /* Save current tokenizer position */
+    saved_pos = tokenizer_pos();
+    
+    /* Calculate data_pos from offset and start searching */
+    data_pos = tokenizer_start() + *data_ptr_cell;
+    tokenizer_goto(data_pos);
+    DEBUG_PRINTF("read_statement: Starting search from offset %d\n", *data_ptr_cell);
+    
+    /* Check if we're continuing from a previous DATA line (data_ptr_cell > 0 and we're at a value) */
+    if (*data_ptr_cell > 0 && (tokenizer_token() == TOKENIZER_NUMBER || tokenizer_token() == TOKENIZER_STRING)) {
+      /* We're positioned at the next value in the same DATA line, no need to search */
+      found_data = 1;
+      DEBUG_PRINTF("read_statement: Continuing from previous DATA line\n");
+    } else {
+      /* Search for next DATA statement */
+      DEBUG_PRINTF("read_statement: Searching for DATA statement\n");
+      while (tokenizer_token() != TOKENIZER_ENDOFINPUT && !found_data) {
+        /* Check current line first, then advance to next line if needed. */
+        if (tokenizer_token() == TOKENIZER_NUMBER) {
+          tokenizer_next();
+          DEBUG_PRINTF("#");
+        }
+        
+        if (tokenizer_token() == TOKENIZER_DATA) {
+          accept(TOKENIZER_DATA);
+          found_data = 1;
+          break;
+        }
+
+        if (tokenizer_token() == TOKENIZER_LF) {
+          tokenizer_next();
+        } else {
+          tokenizer_skip();
+          DEBUG_PRINTF(".");
+        }
+      }
+    }
+    
+    if (!found_data) {
+      DEBUG_PRINTF("read_statement: Out of DATA\n");
+      tokenizer_goto(saved_pos);
+      exit(1);
+    }
+    
+    DEBUG_PRINTF("read_statement: After finding DATA, token=%d, at '%.20s'\n", 
+                 tokenizer_token(), tokenizer_pos());
+    
+    /* Read value from DATA statement */
+    if (is_string) {
+      /* Read string value */
+      if (tokenizer_token() == TOKENIZER_STRING) {
+        tokenizer_string(str_value, sizeof(str_value));
+        DEBUG_PRINTF("read_statement: Read string value '%s'\n", str_value);
+        accept(TOKENIZER_STRING);
+      } else if (tokenizer_token() == TOKENIZER_NUMBER) {
+        /* Allow numbers in string variables */
+        snprintf(str_value, sizeof(str_value), "%g", tokenizer_num());
+        accept(TOKENIZER_NUMBER);
+      } else {
+        DEBUG_PRINTF("read_statement: Expected string or number in DATA\n");
+        tokenizer_goto(saved_pos);
+        exit(1);
+      }
+      
+      /* Assign to string variable or array */
+      DEBUG_PRINTF("read_statement: Setting string var %d to '%s'\n", var, str_value);
+      //if (is_array) {
+      //  set_stringarray_element(var, idx1, idx2, idx3, str_value);
+      //} else {
+        set_stringvariable(var, str_value);
+      //}
+    } else {
+      /* Read numeric value */
+      if (tokenizer_token() == TOKENIZER_NUMBER) {
+        DEBUG_PRINTF("read_statement: About to read number at '%.10s'\n", tokenizer_pos());
+        value = tokenizer_num();
+        accept(TOKENIZER_NUMBER);
+        DEBUG_PRINTF("read_statement: Read numeric value %d\n", (int)value);
+      } else if (tokenizer_token() == TOKENIZER_STRING) {
+        /* Try to parse string as number */
+        tokenizer_string(str_value, sizeof(str_value));
+        value = strtod(str_value, NULL);
+        accept(TOKENIZER_STRING);
+      } else {
+        DEBUG_PRINTF("read_statement: Expected number in DATA\n");
+        tokenizer_goto(saved_pos);
+        exit(1);
+      }
+      
+      /* Assign to numeric variable */
+      //if (is_array) {
+      //  set_array_element(var, idx1, idx2, idx3, value);
+      //} else {
+        set_variable(var, value);
+      //}
+    }
+    
+    /* Update data_ptr_cell offset to current position (after the value we just read) */
+    /* Skip comma if present */
+    if (tokenizer_token() == TOKENIZER_COMMA) {
+      accept(TOKENIZER_COMMA);
+    }
+    *data_ptr_cell = (int32_t)(tokenizer_pos() - tokenizer_start());
+    DEBUG_PRINTF("read_statement: Updated data_ptr_cell to %d, char='%c'\n", 
+                 *data_ptr_cell, 
+                 *data_ptr_cell < 100 ? *(tokenizer_start() + *data_ptr_cell) : '?');
+    
+    /* Restore tokenizer to READ statement */
+    tokenizer_goto(saved_pos);
+    
+    /* Check for more variables in READ */
+    if (tokenizer_token() == TOKENIZER_COMMA) {
+      accept(TOKENIZER_COMMA);
+    } else {
+      /* No more variables - advance to end of statement */
+      while (tokenizer_token() != TOKENIZER_LF &&
+             tokenizer_token() != TOKENIZER_CR &&
+             tokenizer_token() != TOKENIZER_ENDOFINPUT) {
+        tokenizer_next();
+      }
+      break;
+    }
+  } while (1);
+  
+  /* Accept line ending (LF or CR) */
+  if (tokenizer_token() == TOKENIZER_LF) {
+    accept(TOKENIZER_LF);
+  } else if (tokenizer_token() == TOKENIZER_CR) {
+    accept(TOKENIZER_CR);
+    /* Some files may have LF after CR */
+    if (tokenizer_token() == TOKENIZER_LF) {
+      accept(TOKENIZER_LF);
+    }
+  }
+  DEBUG_PRINTF("read_statement: READ complete.\n");
 }
 /*---------------------------------------------------------------------------*/
 static void if_statement(void){
@@ -1394,17 +1762,28 @@ static void next_statement(void){
     if(var == (int)for_stack[*for_depth_cell - 1].for_variable_index) {
       DEBUG_PRINTF("next_statement: matching next for variable %d.\n", var);
       for_state top = for_stack[*for_depth_cell - 1];
-      set_variable(var, get_variable(var) + 1);
-      if(get_variable(var) <= top.to) {
+      VARIABLE_TYPE new_value = get_variable(var) + top.step;
+      set_variable(var, new_value);
+    
+	    /* Check loop condition based on step direction */
+	    int continue_loop;
+	    if (top.step >= 0) {
+	      continue_loop = (new_value <= top.to);
+	    } else {
+	      continue_loop = (new_value >= top.to);
+	    }
+      if(continue_loop) {
         jump_linenum(top.line_after_for);
       } else {
         for_pop();
         accept(TOKENIZER_LF);
       }
     } else {
-      DEBUG_PRINTF("next_statement: ERROR - non-matching next (expected %d, found %d).\n",
-          (int)for_stack[*for_depth_cell - 1].for_variable_index, var);
-      runtime_error("MN", "Non-matching NEXT", line);
+      if (*for_depth_cell > 0) {
+        DEBUG_PRINTF("next_statement: ERROR - non-matching next (expected %d, found %d).\n",
+            (int)for_stack[*for_depth_cell - 1].for_variable_index, var);
+        runtime_error("MN", "Non-matching NEXT", line);
+      }
     }
   } else {
     DEBUG_PRINTF("next_statement: ERROR - next without matching for.\n");
@@ -1414,7 +1793,8 @@ static void next_statement(void){
 }
 /*---------------------------------------------------------------------------*/
 static void for_statement(void) {
-  int for_variable, to;
+  int for_variable;
+  VARIABLE_TYPE to, step;
 
   accept(TOKENIZER_FOR);
   for_variable = tokenizer_variable_num();
@@ -1423,6 +1803,15 @@ static void for_statement(void) {
   set_variable(for_variable, expr());
   accept(TOKENIZER_TO);
   to = expr();
+  
+  /* Optional STEP parameter, defaults to 1 */
+  if (tokenizer_token() == TOKENIZER_STEP) {
+    accept(TOKENIZER_STEP);
+    step = expr();
+  } else {
+    step = 1;
+  }
+  
   accept(TOKENIZER_LF);
 
   for_state st;
@@ -1434,68 +1823,13 @@ static void for_statement(void) {
     st.line_after_for = 0;
   }
   st.for_variable_index = (int32_t)for_variable;
-  st.to = (int32_t)to;
+  st.to = (VARIABLE_TYPE)to;
+  st.step = (VARIABLE_TYPE)step;
   for_push(st);
   #if VERBOSE
-    DEBUG_PRINTF("for_statement: new for, var %d to %d, line_after_for=%u.\n",
-                 (int)st.for_variable_index, (int)st.to, st.line_after_for);
+    DEBUG_PRINTF("for_statement: new for, var %d to %d step %d.\n", (int)st.for_variable_index, (int)st.to, (int)st.step);
   #endif
   
-}
-/*---------------------------------------------------------------------------*/
-static void def_statement(void) {
-  int func_index;
-  int param_var;
-  const char *expr_start_ptr;
-  const char *expr_end_ptr;
-  uint16_t expr_start_offset;
-  uint16_t expr_end_offset;
-
-  accept(TOKENIZER_DEF);
-  accept(TOKENIZER_FN);
-
-  if (tokenizer_token() != TOKENIZER_VARIABLE) {
-    runtime_error("TS", "Expected function name in DEF FN", current_line_number);
-    return;
-  }
-  func_index = tokenizer_variable_num();
-  if (func_index < 0 || func_index >= MAX_FN_DEFS) {
-    runtime_error("TS", "Invalid DEF FN function name", current_line_number);
-    return;
-  }
-  accept(TOKENIZER_VARIABLE);
-
-  accept(TOKENIZER_LEFTPAREN);
-  if (tokenizer_token() != TOKENIZER_VARIABLE) {
-    runtime_error("TS", "Expected DEF FN parameter", current_line_number);
-    return;
-  }
-  param_var = tokenizer_variable_num();
-  if (param_var < 0 || param_var >= UBASIC_VARIABLE_COUNT) {
-    runtime_error("TS", "Invalid DEF FN parameter", current_line_number);
-    return;
-  }
-  accept(TOKENIZER_VARIABLE);
-  accept(TOKENIZER_RIGHTPAREN);
-  accept(TOKENIZER_EQ);
-
-  expr_start_ptr = tokenizer_pos();
-  while (tokenizer_token() != TOKENIZER_LF &&
-         tokenizer_token() != TOKENIZER_CR &&
-         tokenizer_token() != TOKENIZER_ENDOFINPUT) {
-    tokenizer_next();
-  }
-  expr_end_ptr = tokenizer_pos();
-
-  expr_start_offset = (uint16_t)(expr_start_ptr - program_ptr);
-  expr_end_offset = (uint16_t)(expr_end_ptr - program_ptr);
-
-  fn_table[func_index].param_var = (uint16_t)param_var;
-  fn_table[func_index].expr_start = expr_start_offset;
-  fn_table[func_index].expr_end = expr_end_offset;
-  fn_table[func_index].defined = 1;
-
-  accept(TOKENIZER_LF);
 }
 /*---------------------------------------------------------------------------*/
 static void peek_statement(void){
@@ -1580,6 +1914,9 @@ static void statement(void){
   case TOKENIZER_RANDOMIZE:
     randomize_statement();
     break;
+  case TOKENIZER_ON:
+    on_statement();
+    break;
   case TOKENIZER_PUSH:
     push_statement();
     break;
@@ -1588,6 +1925,15 @@ static void statement(void){
     break;
   case TOKENIZER_DEF:
     def_statement();
+    break;
+  case TOKENIZER_READ:
+    read_statement();
+    break;
+  case TOKENIZER_RESTORE:
+    restore_statement();
+    break;
+  case TOKENIZER_DATA:
+    data_statement();
     break;
   case TOKENIZER_LET:
     accept(TOKENIZER_LET);
